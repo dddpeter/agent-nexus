@@ -1,14 +1,9 @@
-// Package web 内嵌 htmx 前端静态资源与模板（technical-design §1：embed 打包，单二进制）。
+// Package web 内嵌前端构建产物（frontend/ → npm run build → dist/，单二进制打包）。
 package web
 
 import "embed"
 
-// Assets 静态资源（htmx.min.js 等）。
+// Dist SPA 构建产物（index.html + assets/ hash 静态资源）。
 //
-//go:embed assets/*
-var Assets embed.FS
-
-// Templates HTML 模板（agent 列表 + 注册向导，任务 11 范围）。
-//
-//go:embed templates/*.gohtml
-var Templates embed.FS
+//go:embed all:dist
+var Dist embed.FS

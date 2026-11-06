@@ -124,13 +124,13 @@ func middlewareRecover(log *slog.Logger) func(http.Handler) http.Handler {
 func middlewareAuth(token string, sessions *sessionStore, log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// 免鉴权：健康检查、登录/状态查询、静态资源与页面
-			if r.URL.Path == "/healthz" || r.URL.Path == "/" ||
-				r.URL.Path == "/api/auth/login" || r.URL.Path == "/api/auth/status" ||
-				strings.HasPrefix(r.URL.Path, "/assets") {
-				next.ServeHTTP(w, r)
-				return
-			}
+		// 免鉴权：健康检查、登录/状态查询；非 /api 路径为 SPA 静态 shell（不含数据）
+		if r.URL.Path == "/healthz" ||
+			r.URL.Path == "/api/auth/login" || r.URL.Path == "/api/auth/status" ||
+			!strings.HasPrefix(r.URL.Path, "/api") {
+			next.ServeHTTP(w, r)
+			return
+		}
 			if token == "" {
 				next.ServeHTTP(w, r) // 未配置 token：本地开发模式放行（启动时已告警）
 				return

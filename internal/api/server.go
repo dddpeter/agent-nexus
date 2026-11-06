@@ -62,8 +62,8 @@ func (s *Server) mount() {
 		s.mountAPI(r)
 	})
 
-	// Web UI 静态资源（go:embed web/；任务 11）
-	s.mountWeb(r)
+	// SPA 前端（go:embed web/dist；vue-router history fallback）
+	s.mountSPA(r)
 
 	s.router = r
 }

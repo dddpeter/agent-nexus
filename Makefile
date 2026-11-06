@@ -2,18 +2,36 @@
 
 BINARY_NEXUS := bin/nexus
 BINARY_ECHOD := bin/echod
+FE_DIR := frontend
+FE_PM ?= npm   # 可换 bun：make build FE_PM=bun
 
-.PHONY: all build echod test vet fmt check clean
+.PHONY: all build echod fe-install fe-dev fe-build fe-test test vet fmt check clean
 
 all: build
 
-build: $(BINARY_NEXUS) $(BINARY_ECHOD)
+# 单二进制：前端产物先构建（web/dist），再 go build（go:embed all:dist）
+build: fe-build $(BINARY_NEXUS) $(BINARY_ECHOD)
 
 $(BINARY_NEXUS):
 	go build -o $(BINARY_NEXUS) ./cmd/nexus
 
 $(BINARY_ECHOD):
 	go build -o $(BINARY_ECHOD) ./cmd/echod
+
+# ---------- 前端（Vue 3 + Vite，frontend/）----------
+
+fe-install:
+	$(FE_PM) --prefix $(FE_DIR) install
+
+# 开发期前后端分离：vite dev server（HMR）+ /api 反代到本地 nexus（NEXUS_BACKEND 可改端口）
+fe-dev:
+	$(FE_PM) --prefix $(FE_DIR) run dev
+
+fe-build: fe-install
+	$(FE_PM) --prefix $(FE_DIR) run build
+
+fe-test:
+	$(FE_PM) --prefix $(FE_DIR) run test
 
 test:
 	go test ./...

@@ -10,7 +10,8 @@ config/prod.yaml
 /dist/
 *.exe
 /nexus
-web/dist/
+web/dist/*
+!web/dist/.gitkeep
 frontend/node_modules/
 frontend/tsconfig.tsbuildinfo
 
