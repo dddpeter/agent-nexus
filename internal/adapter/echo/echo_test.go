@@ -3,8 +3,10 @@ package echo_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -109,18 +111,23 @@ var (
 	echodBinOnce sync.Once
 	echodBin     string
 	echodBinErr  error
+	echodBinDir  string
 )
 
 func echodBinary(t *testing.T) string {
 	t.Helper()
 	echodBinOnce.Do(func() {
-		bin := t.TempDir() + "/echod"
-		out, err := exec.Command("go", "build", "-o", bin, "github.com/dddpeter/agent-nexus/cmd/echod").CombinedOutput()
+		dir, err := os.MkdirTemp("", "echod-bin-")
 		if err != nil {
 			echodBinErr = err
 			return
 		}
-		_ = out
+		echodBinDir = dir
+		bin := dir + "/echod"
+		if out, err := exec.Command("go", "build", "-o", bin, "github.com/dddpeter/agent-nexus/cmd/echod").CombinedOutput(); err != nil {
+			echodBinErr = fmt.Errorf("go build echod: %v: %s", err, out)
+			return
+		}
 		echodBin = bin
 	})
 	require.NoError(t, echodBinErr, "构建 echod 二进制失败")
