@@ -15,7 +15,31 @@
 ```bash
 git clone git@github.com:dddpeter/agent-nexus.git
 cd agent-nexus
-# M0 之后补充：make build / docker-compose up
+
+# 构建（前端 Vue 3 产物 embed 进单二进制；FE_PM=bun 可换包管理器）
+make build
+./bin/nexus serve --listen 127.0.0.1:8080
+```
+
+### 前后端分离开发
+
+前端是独立 Vue 3 + Vite + TS 工程（`frontend/`），调试时享受 HMR 与浏览器 Devtools：
+
+```bash
+make fe-install
+make fe-dev          # vite :5173，/api 反代到 127.0.0.1:8080（NEXUS_BACKEND 可改）
+./bin/nexus serve    # 另开终端跑后端
+```
+
+### 鉴权
+
+配置 `auth_token` 后：CLI/API 用 `Authorization: Bearer <token>`；浏览器经登录页换取
+HttpOnly 会话 cookie（7 天）。不配置 `auth_token` 为本地免登模式。
+
+### 前端单测
+
+```bash
+make fe-test         # vitest
 ```
 
 ## 文档
@@ -26,10 +50,10 @@ cd agent-nexus
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| M0 | 骨架：事件总线 + SQLite + Adapter 接口 + Registry | 🚧 未开始 |
-| M1 | 接入 Hermes（HTTP）+ PicoClaw（CLI） | 🚧 未开始 |
-| M2 | 私聊 + Web UI（SSE 实时回复） | 🚧 未开始 |
-| M3 | 群聊 + 发言仲裁 | 🚧 未开始 |
+| M0 | 骨架：事件总线 + SQLite + Adapter 接口 + Registry | ✅ 完成 |
+| M1 | 接入 Hermes（HTTP）+ PicoClaw（CLI） | ✅ 完成 |
+| M2 | 私聊 + Web UI（Vue 3 SPA，SSE 实时回复） | ✅ 完成 |
+| M3 | 群聊 + 发言仲裁 | 🚧 仲裁器内核已落地 |
 | M4 | 编排 DAG + 定时任务 + 补接 OpenCode/OpenClaw | 🚧 未开始 |
 
 ## 路线图（M4 之后）

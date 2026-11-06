@@ -9,10 +9,11 @@
    - 绕行：停用状态保存在 registry 内存（`agentRT.disabled`），重启后丢失并自动重新探活恢复。
    - 建议：DDL 增加 `agents.disabled INTEGER DEFAULT 0` 列（或扩展 status 枚举），需文档 owner 决定。
 
-2. **Web UI 与 Bearer 鉴权的组合方式**
-   - 现象：`/ui` 页面（agent 列表/注册向导）经全局 auth 中间件；浏览器无法带 `Authorization: Bearer` 头，配置 token 后页面不可用。
-   - 绕行：本地开发模式（不配置 `auth_token`）下页面全部可用；API 侧鉴权完整。
-   - 建议：为 `/ui` 引入 cookie 会话或 `?token=` 一次性登录，需产品决策。
+2. **Web UI 与 Bearer 鉴权的组合方式** ✅ 已解决（2026-11-06）
+   - 原现象：浏览器无法带 `Authorization: Bearer` 头，配置 token 后页面不可用。
+   - 方案：SPA + cookie 会话落地——`POST /api/auth/login` 校验 token 后签发 HttpOnly
+     SameSite=Strict 会话 cookie（7 天），auth 中间件双通道（Bearer 供 API/CLI、cookie 供浏览器）；
+     未配置 auth_token 保持本地免登模式。SPA 静态 shell 不含数据、不参与鉴权。
 
 3. **C-F1-03 的「指向不存在的 endpoint」用例在 echod 上无法构造**
    - echod 为进程内 adapter，无 endpoint 概念。用例改用 hermes adapter 指向 `127.0.0.1:1`（连接拒绝）验证「明确错误而非泛化 500」，语义等价。

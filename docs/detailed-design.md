@@ -223,7 +223,7 @@ type NodeDef struct {
 
 ### F5.1 目标
 
-REST API + SSE 为底座，Web UI（htmx）与 CLI（`nexus` 命令）双入口。
+REST API + SSE 为底座，Web UI（Vue 3 SPA）与 CLI（`nexus` 命令）双入口。
 
 ### F5.2 功能需求
 
@@ -234,9 +234,14 @@ REST API + SSE 为底座，Web UI（htmx）与 CLI（`nexus` 命令）双入口�
 
 ### F5.3 详细设计
 
-- API 层中间件链：recover → requestID → 鉴权 → 限流（简单令牌桶，60 req/min）→ 日志
+- API 层中间件链：recover → requestID → 鉴权 → 限流（简单窗口计数，60 req/min）→ 日志
+- 鉴权双通道：API/CLI 用 `Authorization: Bearer`；浏览器用 `/api/auth/login` 换取的
+  HttpOnly SameSite=Strict 会话 cookie（7 天，内存会话存储，重启后重新登录）。
+  未配置 auth_token = 本地免登模式。SPA 静态 shell 不含数据，不参与鉴权；`/api` 全量鉴权
 - SSE 实现：bus 订阅 → per-connection channel；断线用 `Last-Event-ID`（event_log.seq）补偿重放最近 500 条
-- Web UI：`go:embed` 静态资源；htmx 局部刷新，Alpine 管局部状态；无构建步骤
+- Web UI：Vue 3 + Vite + TypeScript 独立工程（`frontend/`），前后端分离——
+  开发期 `vite dev`（HMR）+ `/api` 反代到 Go 后端；生产 `vite build` 产物 `web/dist`
+  经 `go:embed` 打包单二进制，history fallback 由后端承担（非 `/api` GET → index.html）
 - CLI：`spf13/cobra`；REPL 模式读 stdin 行，Ctrl-C 优雅取消当前请求（context cancel）
 
 ### F5.4 错误处理

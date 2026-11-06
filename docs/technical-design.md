@@ -9,7 +9,7 @@
 |---|---|---|
 | 语言 | Go 1.24+ | 模块名 `github.com/dddpeter/agent-nexus` |
 | 路由 | `go-chi/chi/v5` | 轻量 REST |
-| 前端 | htmx + Alpine.js（嵌入 `web/` 静态资源，`embed` 打包） | 单二进制；API 先行，UI 可后换 Vue |
+| 前端 | Vue 3 + Vite + TypeScript（`frontend/` 独立工程，产物 `web/dist` 经 `embed` 打包） | 前后端分离：开发期 vite dev + `/api` 反代；生产单二进制 |
 | 编排 | Temporal Go SDK；`docker compose` 起 local dev server | 降级：内置轻量调度器 |
 | 存储 | `modernc.org/sqlite`（纯 Go 免 CGO，WAL） | repository 层收敛 SQL |
 | 迁移 | `pressly/goose` | 嵌入式 SQL 迁移 |
@@ -38,7 +38,8 @@ agent-nexus/
 │   ├── repo/               # SQLite repository（唯一 SQL 所在地）
 │   └── config/
 ├── migrations/             # goose SQL 迁移
-├── web/                    # htmx 前端静态资源
+├── frontend/               # Vue 3 + Vite + TS 前端工程（SPA 源码）
+├── web/dist/               # 前端构建产物（vite build 输出，go:embed 单二进制）
 ├── deploy/docker-compose.yml  # nexus + temporal
 └── docs/
 ```
@@ -195,15 +196,20 @@ func (a *Arbiter) Evaluate(ctx context.Context, in Input) Decision
 ## 8. API 设计（REST 一期）
 
 ```
+POST   /api/auth/login              浏览器登录：校验 token，换取 HttpOnly 会话 cookie
+POST   /api/auth/logout             注销会话
+GET    /api/auth/status             会话状态（前端路由守卫；免鉴权）
 POST   /api/agents                  注册 agent（adapter+config+capabilities）
-GET    /api/agents                  列表与健康状态
+GET    /api/agents                  列表与健康状态（?include_removed=true 含软删）
 GET    /api/agents/{id}             详情（config 脱敏回显）
 PUT    /api/agents/{id}             更新配置/能力（变更前自动连通性测试，失败可指定 force）
 POST   /api/agents/{id}/test        连通性测试（不落库，返回耗时与错误详情）
 GET    /api/adapters                已安装 adapter 清单及其 ConfigSchema（注册向导动态表单数据源）
 POST   /api/agents/{id}/disable     停用 / enable 启用 / DELETE 软删
 POST   /api/sessions                建私聊会话 {agent_id}
-POST   /api/sessions/{id}/messages  发消息（同步等回复 or SSE 订阅）
+GET    /api/sessions                最近会话（?limit=20，聊天侧栏）
+POST   /api/sessions/{id}/messages  发消息（mode=sync|async|stream：同步等回复 / 202 回执 / SSE 分帧）
+GET    /api/agents/{id}/sessions    按 agent 的历史会话
 POST   /api/groups                  建群（成员+仲裁配置）
 POST   /api/groups/{id}/messages    群发言（human）
 GET    /api/groups/{id}/stream      SSE：群消息实时流
@@ -213,7 +219,9 @@ POST   /api/tasks/{id}/cancel
 GET    /api/stream                  全局 SSE（agent 状态、任务生命周期）
 ```
 
-鉴权：单用户 token（`Authorization: Bearer`），一期不做多用户。
+鉴权：单用户。API/CLI 走 `Authorization: Bearer`；浏览器（SPA + EventSource）走
+`/api/auth/login` 换取的 HttpOnly SameSite=Strict 会话 cookie（7 天），中间件双通道校验。
+未配置 auth_token 时为本地免登模式（全部放行）。
 
 ## 9. 配置样例
 

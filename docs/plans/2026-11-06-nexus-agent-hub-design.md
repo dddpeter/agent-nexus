@@ -88,7 +88,7 @@ type AgentAdapter interface {
 | 层 | 选型 | 理由 |
 |---|---|---|
 | 语言 | Go 1.24+ | 生态一致、Temporal 一等 SDK、进程管理顺手 |
-| Web 框架 | chi + htmx/Alpine 轻前端 | 单二进制、少依赖；接口先行，UI 复杂再上 Vue |
+| Web 框架 | chi + Vue 3 SPA（frontend/，Vite+TS） | 前后端分离便于调试；产物 embed 仍单二进制 |
 | 编排 | Temporal（docker compose local dev） | 超时/重试/DAG 开箱即用 |
 | 存储 | SQLite WAL（modernc.org/sqlite 纯 Go 免 CGO） | 单二进制 |
 | 实时推送 | SSE | 简单够用 |
