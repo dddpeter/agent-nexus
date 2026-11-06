@@ -4,9 +4,12 @@ package adapter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // SessionID 是 agent 侧会话标识。
@@ -14,13 +17,13 @@ type SessionID string
 
 // Capabilities 能力声明（注册时协商，technical-design §4.1）。
 type Capabilities struct {
-	CanGroupChat   bool `json:"can_group_chat"`
-	CanStream      bool `json:"can_stream"`
-	MaxConcurrency int  `json:"max_concurrency"` // >0；0 非法（F1.5）
+	CanGroupChat   bool `json:"can_group_chat" yaml:"can_group_chat"`
+	CanStream      bool `json:"can_stream" yaml:"can_stream"`
+	MaxConcurrency int  `json:"max_concurrency" yaml:"max_concurrency"` // >0；0 非法（F1.5）
 	// TypicalLatency 序列化为人类可读时长（"1.5s"）。
-	TypicalLatency Duration `json:"typical_latency"`
+	TypicalLatency Duration `json:"typical_latency" yaml:"typical_latency"`
 	// InterruptLevel: 0=禁止插话 1=可申请 2=可直接插。
-	InterruptLevel int `json:"interrupt_level"`
+	InterruptLevel int `json:"interrupt_level" yaml:"interrupt_level"`
 }
 
 // DefaultCapabilities 返回保守默认值（宁严勿松）。
@@ -53,7 +56,7 @@ func (c Capabilities) MergeDefaults(d Capabilities) Capabilities {
 	return out
 }
 
-// Duration 是 JSON 序列化为时长字符串的 time.Duration（"1.5s"）。
+// Duration 是 JSON/YAML 序列化为时长字符串的 time.Duration（"1.5s"）。
 type Duration time.Duration
 
 func (d Duration) D() time.Duration { return time.Duration(d) }
@@ -62,7 +65,21 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 }
 func (d *Duration) UnmarshalJSON(b []byte) error {
 	var s string
-	if err := jsonUnmarshal(b, &s); err != nil {
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	v, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("adapter: invalid duration %q: %w", s, err)
+	}
+	*d = Duration(v)
+	return nil
+}
+
+// UnmarshalYAML 支持 config.yaml 中 "10s" 形式。
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err != nil {
 		return err
 	}
 	v, err := time.ParseDuration(s)

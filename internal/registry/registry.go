@@ -360,6 +360,15 @@ func (r *Impl) Get(ctx context.Context, agentID string) (Agent, error) {
 	return rt.snapshot(), nil
 }
 
+// GetByName 按名字查询运行时 agent。
+func (r *Impl) GetByName(ctx context.Context, name string) (Agent, error) {
+	rec, err := r.store.Agents().GetByName(ctx, name)
+	if err != nil {
+		return Agent{}, err
+	}
+	return r.Get(ctx, rec.ID)
+}
+
 // Adapter 返回 agent 运行时 adapter 实例（session/orchestr 层取用）。
 func (r *Impl) Adapter(agentID string) (adapter.AgentAdapter, error) {
 	r.mu.RLock()
