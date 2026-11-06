@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/dddpeter/agent-nexus/internal/adapter"
 	"github.com/dddpeter/agent-nexus/internal/repo"
 	"github.com/dddpeter/agent-nexus/internal/session/private"
 )
@@ -138,6 +139,8 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusConflict, "agent_unavailable", err.Error()) // F2.4：offline/disabled 409 不排队
 		case errors.Is(err, private.ErrSessionClosed):
 			writeError(w, r, http.StatusConflict, "session_closed", err.Error())
+		case errors.Is(err, adapter.ErrModeNotSupported):
+			writeError(w, r, http.StatusConflict, "mode_not_supported", err.Error()) // agent 不支持该发送模式
 		case errors.Is(err, private.ErrTimeout):
 			// 超时占位已落库：200 + timed_out（session 保留可重发）
 			writeJSON(w, http.StatusOK, sendMessageResp{
@@ -173,6 +176,8 @@ func (s *Server) streamSessionSend(w http.ResponseWriter, r *http.Request, sessi
 			mapWriteError(w, r, err)
 		case errors.Is(err, private.ErrAgentUnavailable):
 			writeError(w, r, http.StatusConflict, "agent_unavailable", err.Error())
+		case errors.Is(err, adapter.ErrModeNotSupported):
+			writeError(w, r, http.StatusConflict, "mode_not_supported", err.Error())
 		default:
 			writeError(w, r, http.StatusBadRequest, "bad_stream", err.Error())
 		}

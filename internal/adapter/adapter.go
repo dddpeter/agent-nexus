@@ -12,6 +12,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ErrModeNotSupported agent 不支持所请求的发送模式（Send/Stream 与其 mode 不匹配）。
+// 语义为请求与能力不匹配（HTTP 409），而非服务端内部错误。
+var ErrModeNotSupported = errors.New("adapter: mode not supported")
+
 // SessionID 是 agent 侧会话标识。
 type SessionID string
 

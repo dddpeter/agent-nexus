@@ -165,14 +165,14 @@ func (a *Adapter) Send(ctx context.Context, sid adapter.SessionID, msg adapter.M
 		<-ctx.Done()
 		return adapter.Reply{}, ctx.Err()
 	default:
-		return adapter.Reply{}, fmt.Errorf("echod: mode %q does not support Send", a.mode())
+		return adapter.Reply{}, fmt.Errorf("echod: mode %q does not support Send: %w", a.mode(), adapter.ErrModeNotSupported)
 	}
 }
 
 // Stream 伪流式：延迟后按分片输出 delta，最后 final（U-F2-03）。
 func (a *Adapter) Stream(ctx context.Context, sid adapter.SessionID, msg adapter.Message) (<-chan adapter.StreamEvent, func(), error) {
 	if a.mode() != ModeStream {
-		return nil, nil, fmt.Errorf("echod: mode %q does not support Stream", a.mode())
+		return nil, nil, fmt.Errorf("echod: mode %q does not support Stream: %w", a.mode(), adapter.ErrModeNotSupported)
 	}
 	a.record(sid, msg)
 	ch := make(chan adapter.StreamEvent, 16)

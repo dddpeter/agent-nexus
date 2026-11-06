@@ -242,3 +242,43 @@ func TestSessionErrors(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "未知会话应 404")
 	assert.Equal(t, "not_found", body2["error"].(map[string]any)["code"])
 }
+
+// U-F2 模式不匹配：agent 不支持所请求发送模式 → 409 mode_not_supported（非 500 internal）。
+func TestSessionModeNotSupported(t *testing.T) {
+	ts, _, _ := newSessionTestServer(t)
+
+	// stream 模式 echod 不支持同步 Send
+	_, agent := doReq(t, http.MethodPost, ts.URL+"/api/agents", map[string]any{
+		"name": "echod-stream-only", "adapter": "echod", "config": map[string]any{"mode": "stream", "stream_chunks": 2},
+	}, authed())
+	streamID := agent["id"].(string)
+	_, sess := doReq(t, http.MethodPost, ts.URL+"/api/sessions", map[string]any{"agent_id": streamID}, authed())
+	streamSess := sess["id"].(string)
+
+	resp, body := doReq(t, http.MethodPost, ts.URL+"/api/sessions/"+streamSess+"/messages",
+		map[string]any{"content": "你好", "mode": "sync"}, authed())
+	assert.Equal(t, http.StatusConflict, resp.StatusCode)
+	assert.Equal(t, "mode_not_supported", body["error"].(map[string]any)["code"])
+
+	// echo 模式 echod 不支持流式 Stream
+	_, agent2 := doReq(t, http.MethodPost, ts.URL+"/api/agents", map[string]any{
+		"name": "echod-echo-only", "adapter": "echod", "config": map[string]any{"mode": "echo"},
+	}, authed())
+	echoID := agent2["id"].(string)
+	_, sess2 := doReq(t, http.MethodPost, ts.URL+"/api/sessions", map[string]any{"agent_id": echoID}, authed())
+	echoSess := sess2["id"].(string)
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/sessions/"+echoSess+"/messages",
+		strings.NewReader(`{"content":"hi","mode":"stream"}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("Content-Type", "application/json")
+	respRaw, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer respRaw.Body.Close()
+	assert.Equal(t, http.StatusConflict, respRaw.StatusCode)
+
+	var env map[string]any
+	require.NoError(t, json.NewDecoder(respRaw.Body).Decode(&env))
+	assert.Equal(t, "mode_not_supported", env["error"].(map[string]any)["code"])
+}
