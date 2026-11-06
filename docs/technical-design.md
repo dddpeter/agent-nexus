@@ -52,7 +52,7 @@ CREATE TABLE agents (
   adapter TEXT NOT NULL,          -- 'hermes' | 'picoclaw' | ...
   config_json TEXT NOT NULL,      -- adapter 专有配置（endpoint/命令行模板等）
   capabilities_json TEXT NOT NULL,-- CanGroupChat/CanStream/MaxConcurrency/...
-  status TEXT NOT NULL DEFAULT 'offline',  -- online|offline|busy
+  status TEXT NOT NULL DEFAULT 'offline',  -- online|offline|busy|removed
   last_heartbeat_at DATETIME
 );
 
@@ -60,8 +60,8 @@ CREATE TABLE sessions (
   id TEXT PRIMARY KEY,
   agent_id TEXT REFERENCES agents(id),
   kind TEXT NOT NULL,             -- private|group|task
-  external_ref TEXT,              -- agent 侧会话标识（--session id / HTTP session）
-  topic_id TEXT,
+  external_ref TEXT,              -- agent 侧会话标识（--session id / HTTP session）；群会话（kind=group）此字段为空
+  topic_id TEXT,                  -- 群会话的话题标识；私聊/任务会话为空。sessions.agent_id 仅私聊/任务会话有值，群会话为 NULL（成员见 groups.members_json）
   created_at DATETIME, closed_at DATETIME
 );
 
@@ -96,6 +96,7 @@ CREATE TABLE tasks (
   agent_id TEXT,
   input TEXT, status TEXT,        -- queued|running|done|failed|cancelled
   result TEXT, error TEXT,
+  nodes_json TEXT,                -- 节点级状态（各节点 status/output/error），一期内嵌
   timeout_seconds INT, retries INT,
   created_at DATETIME, finished_at DATETIME
 );
@@ -259,7 +260,7 @@ services:
 
 | 里程碑 | 交付物 | 验收标准 |
 |---|---|---|
-| M0 | bus/repo/registry/adapter 接口 + echo agent | CLI 注册 echo，发消息收回显 |
+| M0 | bus/repo/registry/adapter 接口 + `echod` fake agent | CLI 注册 `echod`，发消息收回显 |
 | M1 | hermes + picoclaw adapter | CLI 派任务两者返回真实回复 |
 | M2 | 私聊 + Web UI + SSE | 浏览器双向聊天、任务列表 |
 | M3 | 群聊协调器 + 仲裁器 | 人+2 agent 讨论不失控，阈值热调生效 |

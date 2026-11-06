@@ -147,7 +147,7 @@ agent 候选 → 查回合占用：本回合已有接话者？→ Deferred
 ```
 
 - 状态持久化：群状态存内存，快照每 30s 异步落库（重启恢复，丢失容忍）
-- 相关性算法一期用词面重叠（jieba 分词 + Jaccard），接口抽象 `RelevanceScorer`，可替换为向量方案
+- 相关性算法一期用词面重叠（纯 Go 分词 [`gse`](https://github.com/go-ego/gse) + Jaccard，避免 CGO），接口抽象 `RelevanceScorer`，可替换为向量方案
 
 ### F3.4 错误处理
 
@@ -200,7 +200,7 @@ type NodeDef struct {
 - **降级 builtin**：goroutine 池 + 内存 DAG 调度，无恢复能力，重启后 running 任务标记 failed（文档明示差异）；接口 `orchestr.Scheduler` 与 Temporal 实现同签名
 - 派发前置检查：registry 状态 + Acquire（闸门满则 activity 内阻塞等待，受节点 timeout 约束）
 - **上下文注入**：`ContextDigest` 字段可携带群聊话题摘要（F2/F3 联动），渲染进 agent 输入
-- 任务状态机：`queued → running → done | failed | cancelled`；节点级状态单独存（`task_nodes` 可选，一期放 tasks.result_json 内）
+- 任务状态机：`queued → running → done | failed | cancelled`；节点级状态存 `tasks.nodes_json`（见技术设计 §3 DDL）
 
 ### F4.4 错误处理
 

@@ -20,7 +20,7 @@
 
 | 用例 | 类型 | 验证点 |
 |---|---|---|
-| U-F1-01 | 单测 | 注册合法 spec → agent 入库，status=online（echo agent 探活通过） |
+| U-F1-01 | 单测 | 注册合法 spec → agent 入库，status=online（`echod` 探活通过） |
 | U-F1-02 | 单测 | adapter 配置缺字段 → 注册拒绝，错误信息含字段名 |
 | U-F1-03 | 单测 | 重名注册 → 409 |
 | U-F1-04 | 单测 | 心跳连续 3 次失败 → offline + `agent.status` 事件（from=online,to=offline） |
@@ -34,7 +34,7 @@
 
 | 用例 | 类型 | 验证点 |
 |---|---|---|
-| U-F2-01 | 单测 | 同步发消息 → echo agent 回显，messages 落库（sender_type=agent） |
+| U-F2-01 | 单测 | 同步发消息 → `echod` 回显，messages 落库（sender_type=agent） |
 | U-F2-02 | 单测 | 同步超时（agent 延迟 > timeout）→ 超时占位回复 + session 保留 |
 | U-F2-03 | 单测 | 流式：伪流式 echod → SSE 收到 ≥2 个 delta + 1 个 final |
 | U-F2-04 | 单测 | 流式 60s 无 delta → error 事件 |
@@ -52,7 +52,7 @@
 | 用例 | 类型 | 验证点 |
 |---|---|---|
 | U-F3-01 | 表驱动 | 人 @A → 仅 A 获准；B、C 的候选被 Deferred |
-| U-F3-02 | 表驱动 | 人未 @ → priority 最高者接话；并列时最近未发言者优先 |
+| U-F3-02 | 表驱动 | 人未 @ → 相关性×priority 加权最高者接话（纯 priority 不当选）；并列时最近未发言者优先 |
 | U-F3-03 | 表驱动 | 回合占用：A 接话未结束，B 候选 → Deferred |
 | U-F3-04 | 表驱动 | 预算：A 本话题已发言 2 次（默认预算）→ 再次候选被 Deferred + 降权 |
 | U-F3-05 | 表驱动 | 防连环：上一条为 agent 发言且本轮无人插话 → 其他 agent 候选全部拒绝 |
@@ -145,7 +145,7 @@
 
 | 里程碑 | 验收内容 |
 |---|---|
-| M0 | U-F1-01~08、U-F6-01~04、F7 spawn 规范用例全绿；echo agent CLI 注册收发回显演示 |
+| M0 | U-F1-01~08、U-F6-01~04、F7 spawn 规范用例全绿；`echod` CLI 注册收发回显演示 |
 | M1 | C-F1-01、真实 PicoClaw/Hermes 各 1 条派任务冒烟；故障注入矩阵前 3 行通过 |
 | M2 | F2 全部用例 + C-F2-01/02、F5 用例（除手工走查）；浏览器双向聊天演示 |
 | M3 | F3 全部表驱动用例 + C-F3-01/02/03；仲裁回归纳入 CI 必跑 |
