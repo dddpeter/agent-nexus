@@ -130,6 +130,8 @@ type SessionRepo interface {
 	Get(ctx context.Context, id string) (Session, error)
 	Update(ctx context.Context, s Session) error
 	ListByAgent(ctx context.Context, agentID string) ([]Session, error)
+	// ListRecent 最近创建的会话（聊天侧栏）。
+	ListRecent(ctx context.Context, limit int) ([]Session, error)
 }
 
 // MessageRepo messages 聚合（异步写入，存档检索）。

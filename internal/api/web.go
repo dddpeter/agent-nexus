@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -19,13 +20,14 @@ import (
 	"github.com/dddpeter/agent-nexus/web"
 )
 
-// UI 路由（任务 11 范围：agent 列表 + 注册向导，无其他页面）。
-// 走服务端渲染 + htmx 局部刷新；鉴权沿用全局中间件链（本地无 token 模式可直接访问）。
+// UI 路由：服务端渲染 + htmx 局部刷新（technical-design §1：htmx + embed，单二进制）。
+// 鉴权沿用全局中间件链（本地无 token 模式可直接访问，见 TODO#2）。
 
 var (
 	tplList   *template.Template // layout + agents
-	tplWizard *template.Template // layout + wizard
+	tplWizard *template.Template // layout + wizard + config_form
 	tplChat   *template.Template // layout + chat
+	tplDetail *template.Template // layout + detail + config_form
 )
 
 var tplFuncs = template.FuncMap{
@@ -35,11 +37,25 @@ var tplFuncs = template.FuncMap{
 		}
 		return t.Format("15:04:05")
 	},
+	"formatTimeISO": func(t *time.Time) string {
+		if t == nil {
+			return ""
+		}
+		return t.UTC().Format(time.RFC3339)
+	},
+	"formatTimeISOPtr": func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
+	"initial": func(name string) string {
+		if name == "" {
+			return "?"
+		}
+		r := []rune(strings.ToUpper(name))
+		return string(r[0])
+	},
 	"bubbleClass": func(senderType string) string {
 		switch senderType {
-		case "human":
+		case repo.SenderHuman:
 			return "human"
-		case "agent":
+		case repo.SenderAgent:
 			return "agent"
 		default:
 			return "system"
@@ -47,17 +63,19 @@ var tplFuncs = template.FuncMap{
 	},
 	"bubbleLabel": func(senderType string) string {
 		switch senderType {
-		case "human":
+		case repo.SenderHuman:
 			return "你"
-		case "agent":
+		case repo.SenderAgent:
 			return "Agent"
 		default:
 			return "系统"
 		}
 	},
-	"formatTimePtr": func(t time.Time) string { return t.Format("15:04:05") },
 	"chatMessagesData": func(msgs []repo.Message, flash, sid string) chatMessagesVM {
 		return chatMessagesVM{Messages: msgs, Flash: flash, SessionID: sid}
+	},
+	"chatSessionsData": func(sessions []chatSessionItem, current string) map[string]any {
+		return map[string]any{"Sessions": sessions, "CurrentID": current}
 	},
 	"maskedConfig": func(cfg map[string]any) string {
 		if len(cfg) == 0 {
@@ -76,38 +94,147 @@ var tplFuncs = template.FuncMap{
 }
 
 func init() {
-	tplList = template.Must(template.New("list").Funcs(tplFuncs).
-		ParseFS(web.Templates, "templates/layout.gohtml", "templates/agents.gohtml"))
-	tplWizard = template.Must(template.New("wizard").Funcs(tplFuncs).
-		ParseFS(web.Templates, "templates/layout.gohtml", "templates/wizard.gohtml"))
-	tplChat = template.Must(template.New("chat").Funcs(tplFuncs).
-		ParseFS(web.Templates, "templates/layout.gohtml", "templates/chat.gohtml"))
+	base := func(name string, files ...string) *template.Template {
+		return template.Must(template.New(name).Funcs(tplFuncs).
+			ParseFS(web.Templates, append([]string{"templates/layout.gohtml"}, files...)...))
+	}
+	tplList = base("list", "templates/agents.gohtml")
+	tplWizard = base("wizard", "templates/wizard.gohtml", "templates/config_form.gohtml")
+	tplChat = base("chat", "templates/chat.gohtml")
+	tplDetail = base("detail", "templates/detail.gohtml", "templates/config_form.gohtml")
 }
 
-// pageVM 布局模板数据：Active 高亮导航，V 为内容模板数据。
+// pageVM 布局数据：Active 高亮导航，Title 页标题，V 内容模板数据，Meta 顶栏计数。
 type pageVM struct {
 	Active string
+	Title  string
 	V      any
+	Meta   *topMetaVM
 }
 
-func renderListPage(w http.ResponseWriter, status int, vm any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
-	_ = tplList.ExecuteTemplate(w, "layout", pageVM{Active: "agents", V: vm})
+// topMetaVM 顶栏 agent 计数。
+type topMetaVM struct {
+	Total  int
+	Online int
 }
 
-func renderWizardPage(w http.ResponseWriter, status int, vm any) {
+// listVM 列表页/局部视图数据。
+type listVM struct {
+	Agents  []agentDTO
+	Flash   string
+	FlashOK bool
+	Stats   statsVM // 首屏统计条（局部刷新走 /ui/agents/stats）
+}
+
+// statsVM 统计条数据。
+type statsVM struct {
+	Total, Online, Offline, Removed int
+}
+
+// configFormVM config_form 模板数据：字段渲染值在 Go 侧预计算，模板零比较逻辑。
+type configFormVM struct {
+	Fields []fieldVM
+}
+
+// fieldVM 单字段渲染视图（当前值 > 默认值；密钥只给 SecretSet 不给值）。
+type fieldVM struct {
+	Name, Label, Type, Help string
+	Required, Secret        bool
+	Options                 []string
+	Display                 string // text/int/list 的 value
+	SecretSet               bool   // 密钥已设置（占位提示用）
+	Selected                string // select/bool 的选中值（"true"/"false" 或枚举值）
+}
+
+// buildConfigFormVM 由 schema + 当前值（可为 nil/脱敏值）构造渲染视图。
+// secret 字段不回显值：有值 → SecretSet=true（占位「留空保持」）。
+func buildConfigFormVM(schema adapter.Schema, values map[string]any) configFormVM {
+	vm := configFormVM{Fields: make([]fieldVM, 0, len(schema.Fields))}
+	for _, f := range schema.Fields {
+		fv := fieldVM{
+			Name: f.Name, Label: f.Label, Type: string(f.Type), Help: f.Help,
+			Required: f.Required, Secret: f.Secret, Options: f.Options,
+		}
+		cur, hasCur := "", false
+		if values != nil {
+			if v, ok := values[f.Name]; ok && v != nil {
+				cur, hasCur = anyToString(v), true
+			}
+		}
+		def := anyToString(f.Default)
+		switch f.Type {
+		case adapter.FieldBool:
+			pick := def
+			if hasCur {
+				pick = cur
+			}
+			if pick != "true" {
+				pick = "false"
+			}
+			fv.Selected = pick
+		case adapter.FieldString:
+			if len(f.Options) > 0 {
+				pick := def
+				if hasCur {
+					pick = cur
+				}
+				fv.Selected = pick
+			} else if f.Secret {
+				// 掩码 *** 或任意非空当前值都视为「已设置」（留空保持）
+				fv.SecretSet = hasCur && cur != ""
+			} else {
+				fv.Display = def
+				if hasCur {
+					fv.Display = cur
+				}
+			}
+		default: // int / duration / list
+			fv.Display = def
+			if hasCur {
+				fv.Display = cur
+			}
+		}
+		vm.Fields = append(vm.Fields, fv)
+	}
+	return vm
+}
+
+func anyToString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case bool:
+		if t {
+			return "true"
+		}
+		return "false"
+	case int:
+		return strconv.Itoa(t)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case []string:
+		return strings.Join(t, " ")
+	case nil:
+		return ""
+	default:
+		return ""
+	}
+}
+
+func renderPageSet(tpl *template.Template, w http.ResponseWriter, status int, vm pageVM) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	_ = tplWizard.ExecuteTemplate(w, "layout", pageVM{Active: "wizard", V: vm})
+	if err := tpl.ExecuteTemplate(w, "layout", vm); err != nil {
+		slog.Error("page render failed", "err", err)
+	}
 }
 
 func renderPartial(w http.ResponseWriter, status int, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	// config_form/test_result/submit_result 定义于 wizard 模板集；agents_table 定义于 list；
-	// chat_messages 定义于 chat——各模板集只会渲染自己定义的 name，缺失者返回空
-	for _, tpl := range []*template.Template{tplWizard, tplList, tplChat} {
+	for _, tpl := range []*template.Template{tplWizard, tplList, tplChat, tplDetail} {
 		if tpl.Lookup(name) == nil {
 			continue
 		}
@@ -119,47 +246,56 @@ func renderPartial(w http.ResponseWriter, status int, name string, data any) {
 	slog.Error("template not found", "name", name)
 }
 
-// chatMessagesVM 聊天消息局部数据。
-type chatMessagesVM struct {
-	Messages  []repo.Message
-	Flash     string
-	SessionID string
-}
-
-func renderChatPage(w http.ResponseWriter, status int, vm chatVM) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
-	if err := tplChat.ExecuteTemplate(w, "layout", pageVM{Active: "chat", V: vm}); err != nil {
-		slog.Error("chat page render failed", "err", err)
-	}
-}
-
 // mountWeb 挂载静态资源与 UI 页面。
 func (s *Server) mountWeb(r chi.Router) {
 	s.mountChat(r)
-	// 静态资源
+
 	sub, _ := fs.Sub(web.Assets, "assets")
 	r.Handle("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.FS(sub))))
 
-	// 页面
-	r.Get("/", s.pageAgentList)
-	r.Get("/agents/table", s.partialAgentsTable)
+	r.Get("/ui/topmeta", s.partialTopMeta)
+	r.Get("/ui/agents/stats", s.partialAgentStats)
+
+	// agent 配置页与保存
+	r.Get("/agents/{id}/view", s.pageAgentDetail)
+	r.Post("/ui/agents/{id}/save", s.actionAgentSave)
+
+	// 向导
 	r.Get("/agents/new", s.pageWizard)
 	r.Get("/agents/new/config-form", s.partialConfigForm)
 	r.Post("/agents/new/test", s.actionWizardTest)
 	r.Post("/agents/new/submit", s.actionWizardSubmit)
 
-	// 列表行操作
+	// 列表页与局部
+	r.Get("/", s.pageAgentList)
+	r.Get("/agents/table", s.partialAgentsTable)
+
+	// 行操作
 	r.Post("/ui/agents/{id}/test", s.actionAgentTest)
 	r.Post("/ui/agents/{id}/disable", s.actionAgentDisable)
 	r.Post("/ui/agents/{id}/enable", s.actionAgentEnable)
 	r.Post("/ui/agents/{id}/delete", s.actionAgentDelete)
 }
 
-// listVM 列表页/局部视图数据。
-type listVM struct {
-	Agents []agentDTO
-	Flash  string
+// computeTopMeta 顶栏计数。
+func (s *Server) computeTopMeta(ctx context.Context) topMetaVM {
+	agents, err := s.deps.Registry.List(ctx, registry.StatusFilter{})
+	if err != nil {
+		return topMetaVM{}
+	}
+	vm := topMetaVM{Total: len(agents)}
+	for _, a := range agents {
+		if a.Status == repo.StatusOnline || a.Status == repo.StatusBusy {
+			vm.Online++
+		}
+	}
+	return vm
+}
+
+// metaOf 供布局渲染的顶栏计数。
+func (s *Server) metaOf(r *http.Request) *topMetaVM {
+	vm := s.computeTopMeta(r.Context())
+	return &vm
 }
 
 // pageAgentList GET / —— agent 列表页。
@@ -173,15 +309,19 @@ func (s *Server) pageAgentList(w http.ResponseWriter, r *http.Request) {
 	for _, a := range agents {
 		dtos = append(dtos, s.toDTO(a))
 	}
-	renderListPage(w, http.StatusOK, listVM{Agents: dtos})
+	renderPageSet(tplList, w, http.StatusOK, pageVM{
+		Active: "agents", Title: "Agent",
+		V:    listVM{Agents: dtos, Stats: s.computeStats(r.Context())},
+		Meta: s.metaOf(r),
+	})
 }
 
-// partialAgentsTable GET /agents/table —— 列表局部（轮询/操作后刷新）。
+// partialAgentsTable GET /agents/table —— 列表局部。
 func (s *Server) partialAgentsTable(w http.ResponseWriter, r *http.Request) {
-	s.renderTable(w, r, "")
+	s.renderTable(w, r, "", false)
 }
 
-func (s *Server) renderTable(w http.ResponseWriter, r *http.Request, flash string) {
+func (s *Server) renderTable(w http.ResponseWriter, r *http.Request, flash string, ok bool) {
 	agents, err := s.deps.Registry.List(r.Context(), registry.StatusFilter{})
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "internal", err.Error())
@@ -191,28 +331,57 @@ func (s *Server) renderTable(w http.ResponseWriter, r *http.Request, flash strin
 	for _, a := range agents {
 		dtos = append(dtos, s.toDTO(a))
 	}
-	renderPartial(w, http.StatusOK, "agents_table", listVM{Agents: dtos, Flash: flash})
+	renderPartial(w, http.StatusOK, "agents_table", listVM{Agents: dtos, Flash: flash, FlashOK: ok})
+}
+
+// partialTopMeta GET /ui/topmeta。
+func (s *Server) partialTopMeta(w http.ResponseWriter, r *http.Request) {
+	renderPartial(w, http.StatusOK, "topmeta", s.computeTopMeta(r.Context()))
+}
+
+// partialAgentStats GET /ui/agents/stats。
+func (s *Server) partialAgentStats(w http.ResponseWriter, r *http.Request) {
+	renderPartial(w, http.StatusOK, "agents_stats", s.computeStats(r.Context()))
+}
+
+func (s *Server) computeStats(ctx context.Context) statsVM {
+	agents, err := s.deps.Registry.List(ctx, registry.StatusFilter{IncludeRemoved: true})
+	if err != nil {
+		return statsVM{}
+	}
+	vm := statsVM{Total: len(agents)}
+	for _, a := range agents {
+		switch a.Status {
+		case repo.StatusOnline, repo.StatusBusy:
+			vm.Online++
+		case repo.StatusOffline:
+			vm.Offline++
+		case repo.StatusRemoved:
+			vm.Removed++
+		}
+	}
+	vm.Total -= vm.Removed
+	return vm
 }
 
 // pageWizard GET /agents/new —— 注册向导。
-func (s *Server) pageWizard(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) pageWizard(w http.ResponseWriter, r *http.Request) {
 	type adapterItem struct{ Name string }
 	items := make([]adapterItem, 0, 8)
-	for _, f := range s.deps.Registry.Factories() {
+	factories := s.deps.Registry.Factories()
+	for _, f := range factories {
 		items = append(items, adapterItem{Name: f.Name()})
 	}
-	// 首个 adapter 的表单直接内联渲染
 	var initial any
-	if factories := s.deps.Registry.Factories(); len(factories) > 0 {
-		initial = schemaVM{factories[0].ConfigSchema()}
+	if len(factories) > 0 {
+		initial = buildConfigFormVM(factories[0].ConfigSchema(), nil)
 	}
-	renderWizardPage(w, http.StatusOK, map[string]any{
-		"Adapters": items, "InitialSchema": initial,
+	renderPageSet(tplWizard, w, http.StatusOK, pageVM{
+		Active: "wizard", Title: "注册 Agent",
+		V:    map[string]any{"Adapters": items, "InitialSchema": initial},
+		Meta: s.metaOf(r),
 	})
 }
-
-// schemaVM config_form 模板数据。
-type schemaVM struct{ adapter.Schema }
 
 // partialConfigForm GET /agents/new/config-form?adapter=echod —— 动态表单局部。
 func (s *Server) partialConfigForm(w http.ResponseWriter, r *http.Request) {
@@ -221,10 +390,10 @@ func (s *Server) partialConfigForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown adapter", http.StatusBadRequest)
 		return
 	}
-	renderPartial(w, http.StatusOK, "config_form", schemaVM{f.ConfigSchema()})
+	renderPartial(w, http.StatusOK, "config_form", buildConfigFormVM(f.ConfigSchema(), nil))
 }
 
-// wizardSpecFromForm 从向导表单解析注册规格（cfg_* → config，cap_* → capabilities）。
+// wizardSpecFromForm 从表单解析注册/编辑规格（cfg_* → config，cap_* → capabilities）。
 func (s *Server) wizardSpecFromForm(r *http.Request) (name string, spec registry.AgentSpec, sendMsg bool, err error) {
 	if err := r.ParseForm(); err != nil {
 		return "", spec, false, err
@@ -251,7 +420,6 @@ func (s *Server) wizardSpecFromForm(r *http.Request) (name string, spec registry
 	}
 	spec = registry.AgentSpec{Name: name, Adapter: adapterName, Config: cfg}
 
-	// 能力覆盖
 	var caps adapter.Capabilities
 	hasCaps := false
 	if v := strings.TrimSpace(r.FormValue("cap_max_concurrency")); v != "" {
@@ -269,10 +437,14 @@ func (s *Server) wizardSpecFromForm(r *http.Request) (name string, spec registry
 			caps.TypicalLatency, hasCaps = adapter.Duration(time.Duration(n)*time.Second), true
 		}
 	}
+	if v := r.FormValue("cap_can_stream"); v == "true" || v == "false" {
+		caps.CanStream = v == "true"
+		hasCaps = true
+	}
 	if hasCaps {
 		spec.Capabilities = &caps
 	}
-	sendMsg = r.FormValue("send_message") == "on" || r.FormValue("send_message") == "true"
+	sendMsg = r.FormValue("send_message") == "true" || r.FormValue("send_message") == "on"
 	return name, spec, sendMsg, nil
 }
 
@@ -280,12 +452,12 @@ func (s *Server) wizardSpecFromForm(r *http.Request) (name string, spec registry
 func (s *Server) actionWizardTest(w http.ResponseWriter, r *http.Request) {
 	_, spec, sendMsg, err := s.wizardSpecFromForm(r)
 	if err != nil {
-		renderPartial(w, http.StatusBadRequest, "test_result", testResultVM{OK: false, Error: err.Error()})
+		renderPartial(w, http.StatusBadRequest, "test_result", testResultVM{Error: err.Error()})
 		return
 	}
 	res := s.deps.Registry.TestConnection(r.Context(), spec, sendMsg)
 	renderPartial(w, http.StatusOK, "test_result", testResultVM{
-		OK: res.OK, DurationMs: fmt.Sprintf("%.1f", res.DurationMs),
+		OK: res.OK, DurationMs: strconv.FormatFloat(res.DurationMs, 'f', 1, 64),
 		Error: res.Err, SentMessage: sendMsg,
 	})
 }
@@ -297,7 +469,7 @@ type testResultVM struct {
 	SentMessage bool
 }
 
-// actionWizardSubmit POST /agents/new/submit —— 提交注册。
+// actionWizardSubmit POST /agents/new/submit —— 提交注册；成功后 HX-Redirect 到配置页。
 func (s *Server) actionWizardSubmit(w http.ResponseWriter, r *http.Request) {
 	name, spec, _, err := s.wizardSpecFromForm(r)
 	if err != nil {
@@ -309,14 +481,20 @@ func (s *Server) actionWizardSubmit(w http.ResponseWriter, r *http.Request) {
 		renderPartial(w, http.StatusOK, "submit_result", submitResultVM{Error: err.Error()})
 		return
 	}
-	renderPartial(w, http.StatusOK, "submit_result", submitResultVM{OK: true, Name: name, Status: agent.Status})
+	w.Header().Set("HX-Redirect", "/agents/"+agent.ID+"/view")
+	renderPartial(w, http.StatusOK, "submit_result", submitResultVM{
+		OK: true, Name: name, Status: agent.Status,
+		ViewURL: "/agents/" + agent.ID + "/view", AgentID: agent.ID,
+	})
 }
 
 type submitResultVM struct {
-	OK     bool
-	Name   string
-	Status string
-	Error  string
+	OK      bool
+	Name    string
+	Status  string
+	Error   string
+	ViewURL string
+	AgentID string
 }
 
 // ---------- 列表行操作 ----------
@@ -330,11 +508,15 @@ func (s *Server) actionAgentTest(w http.ResponseWriter, r *http.Request) {
 	}
 	res := s.deps.Registry.TestConnection(r.Context(),
 		registry.AgentSpec{Adapter: agent.Adapter, Config: agent.Config}, false)
+	s.renderTable(w, r, fmtConnectivity(res), res.OK)
+}
+
+func fmtConnectivity(res registry.TestResult) string {
 	flash := fmt.Sprintf("连通性测试 %s：%.1f ms", map[bool]string{true: "通过", false: "失败"}[res.OK], res.DurationMs)
-	if !res.OK {
+	if !res.OK && res.Err != "" {
 		flash += " — " + res.Err
 	}
-	s.renderTable(w, r, flash)
+	return flash
 }
 
 func (s *Server) actionAgentDisable(w http.ResponseWriter, r *http.Request) {
@@ -342,7 +524,7 @@ func (s *Server) actionAgentDisable(w http.ResponseWriter, r *http.Request) {
 		mapWriteError(w, r, err)
 		return
 	}
-	s.renderTable(w, r, "已停用（enable 可恢复）")
+	s.renderTable(w, r, "已停用（可随时启用恢复）", true)
 }
 
 func (s *Server) actionAgentEnable(w http.ResponseWriter, r *http.Request) {
@@ -350,7 +532,7 @@ func (s *Server) actionAgentEnable(w http.ResponseWriter, r *http.Request) {
 		mapWriteError(w, r, err)
 		return
 	}
-	s.renderTable(w, r, "已启用并重新探活")
+	s.renderTable(w, r, "已启用并重新探活", true)
 }
 
 func (s *Server) actionAgentDelete(w http.ResponseWriter, r *http.Request) {
@@ -358,5 +540,5 @@ func (s *Server) actionAgentDelete(w http.ResponseWriter, r *http.Request) {
 		mapWriteError(w, r, err)
 		return
 	}
-	s.renderTable(w, r, "已软删（历史会话/任务保留，include_removed 可查）")
+	s.renderTable(w, r, "已软删（历史会话/消息保留）", true)
 }

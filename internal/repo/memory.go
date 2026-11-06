@@ -143,6 +143,20 @@ func (m *memSessionRepo) Update(_ context.Context, s Session) error {
 	return nil
 }
 
+func (m *memSessionRepo) ListRecent(_ context.Context, limit int) ([]Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	all := make([]Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		all = append(all, s)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
 func (m *memSessionRepo) ListByAgent(_ context.Context, agentID string) ([]Session, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

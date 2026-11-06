@@ -43,13 +43,19 @@ func TestUIPagesSmoke(t *testing.T) {
 	// 列表页
 	code, body := getUI(t, ts.URL, "/")
 	require.Equal(t, http.StatusOK, code)
-	assert.Contains(t, body, "已注册 Agent")
+	assert.Contains(t, body, "被纳管的 agent 目录")
 	assert.Contains(t, body, "注册 Agent")
 
 	// 列表局部
 	code, body = getUI(t, ts.URL, "/agents/table")
 	require.Equal(t, http.StatusOK, code)
-	assert.Contains(t, body, "暂无 agent")
+	assert.Contains(t, body, "还没有注册任何 agent")
+
+	// 首屏整页渲染不中断：统计条 + 空态同时在场（防 agents_stats 数据契约回归）
+	code, body = getUI(t, ts.URL, "/")
+	require.Equal(t, http.StatusOK, code)
+	assert.Contains(t, body, "已注册", "首屏统计条应渲染")
+	assert.Contains(t, body, "还没有注册任何 agent", "首屏表格空态应渲染")
 
 	// 向导页：adapter 下拉 + 首个 schema 内联表单
 	code, body = getUI(t, ts.URL, "/agents/new")

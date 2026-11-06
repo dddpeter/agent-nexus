@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -12,14 +14,41 @@ import (
 )
 
 // 私聊聊天页（M2：浏览器双向聊天）。
-// 服务端渲染 + htmx 局部刷新；接收侧用原生 EventSource 订阅 /api/stream 过滤本会话事件触发刷新；
-// 流式发送为 fetch 读 SSE 分块渐进渲染（可降级：同步发送纯 htmx 表单，无 JS 也可用）。
+// 服务端渲染 + htmx 局部刷新；接收侧原生 EventSource 订阅 /api/stream 过滤本会话事件触发刷新；
+// 流式发送为 fetch 读 SSE 分块渐进渲染（同步发送为纯 htmx 表单，无 JS 也可用）。
 
 func (s *Server) mountChat(r chi.Router) {
 	r.Get("/chat", s.pageChat)
 	r.Post("/ui/chat/session", s.createChatSession)
 	r.Post("/ui/chat/send", s.chatSend)
 	r.Get("/ui/chat/messages", s.chatMessages)
+	r.Get("/ui/chat/sessions", s.partialChatSessions)
+}
+
+// chatSessionItem 侧栏会话项。
+type chatSessionItem struct {
+	ID        string
+	AgentID   string
+	AgentName string
+	CreatedAt time.Time
+}
+
+// toSessionItems 转换侧栏项（agent 名取当前注册表，软删后沿用 id）。
+func (s *Server) toSessionItems(ctx context.Context, sessions []repo.Session) []chatSessionItem {
+	items := make([]chatSessionItem, 0, len(sessions))
+	for _, sess := range sessions {
+		if sess.AgentID == nil {
+			continue
+		}
+		name := *sess.AgentID
+		if ag, err := s.deps.Registry.Get(ctx, *sess.AgentID); err == nil {
+			name = ag.Name
+		}
+		items = append(items, chatSessionItem{
+			ID: sess.ID, AgentID: *sess.AgentID, AgentName: name, CreatedAt: sess.CreatedAt,
+		})
+	}
+	return items
 }
 
 // chatVM 聊天页数据。
@@ -27,11 +56,12 @@ type chatVM struct {
 	Agents   []agentDTO
 	Session  *repo.Session
 	Agent    *agentDTO
-	Messages []repo.Message
-	Flash    string
+	Messages []repo.Message    // 当前会话历史（首屏服务端渲染；之后走局部刷新）
+	Sessions []chatSessionItem // 侧栏最近会话
 }
 
-// pageChat GET /chat?session= —— 聊天页（无会话时展示 agent 选择器）。
+// pageChat GET /chat?session=…&agent=… —— 聊天页。
+// agent 参数：直接为该 agent 建会话（向导/详情页「开始私聊」入口）。
 func (s *Server) pageChat(w http.ResponseWriter, r *http.Request) {
 	vm := chatVM{}
 	agents, err := s.deps.Registry.List(r.Context(), registry.StatusFilter{})
@@ -42,19 +72,36 @@ func (s *Server) pageChat(w http.ResponseWriter, r *http.Request) {
 	for _, a := range agents {
 		vm.Agents = append(vm.Agents, s.toDTO(a))
 	}
-	if sid := r.URL.Query().Get("session"); sid != "" && s.deps.Router != nil {
+	if recent, err := s.deps.Store.Sessions().ListRecent(r.Context(), 20); err == nil {
+		vm.Sessions = s.toSessionItems(r.Context(), recent)
+	}
+	if sid := r.URL.Query().Get("session"); sid != "" {
 		if sess, err := s.deps.Store.Sessions().Get(r.Context(), sid); err == nil {
 			vm.Session = &sess
-			if ag, err := s.deps.Registry.Get(r.Context(), *sess.AgentID); err == nil {
-				dto := s.toDTO(ag)
-				vm.Agent = &dto
-			}
-			if msgs, err := s.deps.Store.Messages().ListBySession(r.Context(), sid); err == nil {
-				vm.Messages = msgs
-			}
+		}
+	} else if agentID := r.URL.Query().Get("agent"); agentID != "" && s.deps.Router != nil {
+		if sess, err := s.deps.Router.CreateSession(r.Context(), agentID); err == nil {
+			// 建会话后重定向到规范 URL（侧栏与面板一致）
+			http.Redirect(w, r, "/chat?session="+sess.ID, http.StatusSeeOther)
+			return
 		}
 	}
-	renderChatPage(w, http.StatusOK, vm)
+	if vm.Session != nil {
+		if msgs, err := s.deps.Store.Messages().ListBySession(r.Context(), vm.Session.ID); err == nil {
+			vm.Messages = msgs
+		}
+	}
+	if vm.Session != nil && vm.Session.AgentID != nil {
+		if ag, err := s.deps.Registry.Get(r.Context(), *vm.Session.AgentID); err == nil {
+			dto := s.toDTO(ag)
+			vm.Agent = &dto
+		} else {
+			// agent 已软删：占位展示（历史会话仍可读）
+			dto := agentDTO{ID: *vm.Session.AgentID, Name: *vm.Session.AgentID, Status: repo.StatusRemoved}
+			vm.Agent = &dto
+		}
+	}
+	renderPageSet(tplChat, w, http.StatusOK, pageVM{Active: "chat", Title: "私聊", V: vm, Meta: s.metaOf(r)})
 }
 
 // createChatSession POST /ui/chat/session（表单 agent_id）→ 303 到 /chat?session=。
@@ -116,4 +163,24 @@ func (s *Server) renderChatMessages(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 	renderPartial(w, http.StatusOK, "chat_messages", chatMessagesVM{Messages: msgs, Flash: flash, SessionID: sessionID})
+}
+
+// chatMessagesVM 消息局部数据。
+type chatMessagesVM struct {
+	Messages  []repo.Message
+	Flash     string
+	SessionID string
+}
+
+// partialChatSessions GET /ui/chat/sessions?current= —— 侧栏会话局部。
+func (s *Server) partialChatSessions(w http.ResponseWriter, r *http.Request) {
+	sessions, err := s.deps.Store.Sessions().ListRecent(r.Context(), 20)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	renderPartial(w, http.StatusOK, "chat_sessions", map[string]any{
+		"Sessions":  s.toSessionItems(r.Context(), sessions),
+		"CurrentID": r.URL.Query().Get("current"),
+	})
 }

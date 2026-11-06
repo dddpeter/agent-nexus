@@ -1,80 +1,90 @@
 {{define "content"}}
-<div class="card">
-  <h2 style="font-size:15px; margin:0 0 4px;">注册 Agent 向导</h2>
-  <p class="hint">选 adapter → 动态配置表单（来自 adapter 的 ConfigSchema）→ 在线连通性测试 → 提交注册。</p>
-  <form id="wizard" hx-post="/agents/new/test" hx-target="#test-result">
-    <label>Agent 名字</label>
-    <input type="text" name="name" placeholder="如 echod-main" required>
-
-    <label>Adapter 类型</label>
-    <select name="adapter" hx-get="/agents/new/config-form" hx-trigger="change" hx-target="#config-form" hx-include="this">
-      {{range .V.Adapters}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
-    </select>
-
-    <div id="config-form">
-      {{if .V.InitialSchema}}{{template "config_form" .V.InitialSchema}}{{end}}
-    </div>
-
-    <label>能力参数（可选覆盖）</label>
-    <div style="display:flex; gap:12px;">
-      <div style="flex:1"><input type="number" name="cap_max_concurrency" placeholder="最大并发（默认 1）" min="1"></div>
-      <div style="flex:1"><input type="number" name="cap_interrupt_level" placeholder="插话级别 0-2" min="0" max="2"></div>
-      <div style="flex:1"><input type="number" name="cap_typical_latency_s" placeholder="典型延迟(秒)"></div>
-    </div>
-    <div class="hint">CanGroupChat / CanStream 取 adapter 默认值，可在注册后经 API 覆盖。</div>
-
-    <button type="submit">测试连通性</button>
-  </form>
-  <div id="test-result"></div>
-
-  <form id="submit-form" hx-post="/agents/new/submit" hx-target="#submit-result" hx-include="#wizard">
-    <button type="submit">提交注册</button>
-  </form>
-  <div id="submit-result"></div>
+<div class="page-head">
+  <div>
+    <h1>注册 Agent</h1>
+    <div class="sub">三步接入：选类型 → 配置 → 测试并提交</div>
+  </div>
 </div>
-{{end}}
 
-{{define "config_form"}}
-  {{range .Fields}}
-    <label>{{.Label}} <span class="mono hint">({{.Name}}){{if .Secret}} · 密钥{{end}}{{if .Required}} · 必填{{end}}</span></label>
-    {{if .Options}}
-      <select name="cfg_{{.Name}}">
-        {{range .Options}}<option value="{{.}}">{{.}}</option>{{end}}
-      </select>
-    {{else if eq .Type "bool"}}
-      <select name="cfg_{{.Name}}">
-        <option value="true">true</option>
-        <option value="false">false</option>
-      </select>
-    {{else if eq .Type "int"}}
-      <input type="number" name="cfg_{{.Name}}" value="{{.Default}}">
-    {{else if eq .Type "list"}}
-      <input type="text" name="cfg_{{.Name}}" placeholder="空格分隔的多值" value="{{.Default}}">
-    {{else if .Secret}}
-      <input type="password" name="cfg_{{.Name}}" placeholder="{{if .Default}}•••（留空保持）{{else}}密钥值{{end}}">
-    {{else}}
-      <input type="text" name="cfg_{{.Name}}" value="{{.Default}}">
-    {{end}}
-    {{if .Help}}<div class="hint">{{.Help}}</div>{{end}}
-  {{end}}
+<div class="steps" id="wiz-steps">
+  <div class="step on" data-step="1"><span class="dot">1</span>选择类型</div>
+  <div class="step" data-step="2"><span class="dot">2</span>配置与能力</div>
+  <div class="step" data-step="3"><span class="dot">3</span>测试并提交</div>
+</div>
+
+<div class="card">
+  <fieldset id="wiz-fs-1">
+    <label class="f-label">Agent 名字 <span class="f-req">*</span></label>
+    <input class="f-input" type="text" name="name" form="wiz-form" placeholder="如 echod-main、hermes-coder" required>
+
+    <label class="f-label">Adapter 类型 <span class="f-req">*</span></label>
+    <select class="f-input" name="adapter" form="wiz-form" id="wiz-adapter"
+            hx-get="/agents/new/config-form" hx-trigger="change" hx-target="#config-form" hx-include="this">
+      {{range .Adapters}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+    </select>
+    <div class="f-hint">hermes = HTTP 型范式 · picoclaw = CLI 型范式 · echod = 内置测试假 agent</div>
+    <div style="margin-top:18px"><button class="btn btn-primary" type="button" onclick="wizGo(2)">下一步</button></div>
+  </fieldset>
+
+  <fieldset id="wiz-fs-2" style="display:none;border:none;padding:0;margin:0">
+    <label class="f-label">Adapter 配置</label>
+    <div id="config-form">{{template "config_form" .InitialSchema}}</div>
+    <label class="f-label">能力（可选覆盖）</label>
+    <div class="f-row">
+      <div><input class="f-input" type="number" name="cap_max_concurrency" form="wiz-form" placeholder="最大并发（默认 1）" min="1"></div>
+      <div><input class="f-input" type="number" name="cap_interrupt_level" form="wiz-form" placeholder="插话级别 0-2" min="0" max="2"></div>
+      <div><input class="f-input" type="text" name="cap_typical_latency_s" form="wiz-form" placeholder="典型延迟（秒）"></div>
+    </div>
+    <div class="f-hint">未填项沿用 adapter 默认能力。</div>
+    <div style="display:flex;gap:10px;margin-top:18px">
+      <button class="btn btn-secondary" type="button" onclick="wizGo(1)">上一步</button>
+      <button class="btn btn-primary" type="button" onclick="wizGo(3)">下一步</button>
+    </div>
+  </fieldset>
+
+  <fieldset id="wiz-fs-3" style="display:none;border:none;padding:0;margin:0">
+    <div class="f-hint" style="margin-bottom:10px">提交前先测试连通性（探活 + 可选试发）；测试失败仍可提交，agent 将以 offline 保存。</div>
+    <label class="small" style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--ink-2)">
+      <input type="checkbox" name="send_message" value="true" form="wiz-form"> 测试时试发一条消息
+    </label>
+    <div id="test-result"></div>
+    <div style="display:flex;gap:10px;margin-top:18px">
+      <button class="btn btn-secondary" type="button" onclick="wizGo(2)">上一步</button>
+      <button class="btn btn-secondary" type="submit" form="wiz-test-form">测试连通性</button>
+      <button class="btn btn-primary" type="submit" form="wiz-form">提交注册</button>
+    </div>
+    <div id="submit-result"></div>
+  </fieldset>
+</div>
+
+<form id="wiz-form" hx-post="/agents/new/submit" hx-target="#submit-result" hx-swap="innerHTML"></form>
+<form id="wiz-test-form" hx-post="/agents/new/test" hx-target="#test-result" hx-swap="innerHTML" hx-include="#wiz-form"></form>
+
+<script>
+function wizGo(n){
+  for(var i=1;i<=3;i++){
+    document.getElementById('wiz-fs-'+i).style.display = i===n?'':'none';
+  }
+  document.querySelectorAll('#wiz-steps .step').forEach(function(s){
+    var k=+s.dataset.step;
+    s.classList.toggle('on', k===n);
+    s.classList.toggle('done', k<n);
+    if(k<n) s.querySelector('.dot').textContent='✓'; else s.querySelector('.dot').textContent=k;
+  });
+}
+</script>
 {{end}}
 
 {{define "test_result"}}
-<div class="test-result">
-  {{if .OK}}
-    <span class="ok">✔ 连通性测试通过</span>（{{.DurationMs}} ms{{if .SentMessage}} · 含试发消息{{end}}）
-  {{else}}
-    <span class="bad">✘ 测试失败</span>（{{.DurationMs}} ms）：{{.Error}}
-  {{end}}
+<div class="callout {{if .OK}}ok{{else}}bad{{end}}">
+  {{if .OK}}✔ 连通性测试通过{{else}}✘ 测试失败{{end}}（{{.DurationMs}} ms{{if .SentMessage}} · 含试发消息{{end}}）
+  {{if .Error}}<span class="detail">{{.Error}}</span>{{end}}
 </div>
 {{end}}
 
 {{define "submit_result"}}
-<div class="test-result">
-  {{if .OK}}
-    <span class="ok">✔ 注册成功</span>：{{.Name}} → 状态 {{.Status}} · <a href="/">返回列表</a>
-  {{else}}
-    <span class="bad">✘ 注册失败</span>：{{.Error}}
-  {{end}}
+<div class="callout {{if .OK}}ok{{else}}bad{{end}}">
+  {{if .OK}}✔ 注册成功：{{.Name}} · 状态 {{.Status}} · <a href="{{.ViewURL}}">查看配置页</a> 或 <a href="/chat?agent={{.AgentID}}">开始私聊</a>
+  {{else}}✘ 注册失败<span class="detail">{{.Error}}</span>{{end}}
 </div>
 {{end}}

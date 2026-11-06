@@ -1,0 +1,24 @@
+{{define "config_form"}}
+{{range $f := .Fields}}
+  <label class="f-label">{{.Label}} <span class="mono muted small">({{.Name}})</span>{{if .Secret}}<span class="f-secret-tag">密钥</span>{{end}}{{if .Required}}<span class="f-req">*</span>{{end}}</label>
+  {{if .Options}}
+    <select class="f-input" name="cfg_{{.Name}}">
+      {{range .Options}}<option value="{{.}}" {{if eq . $f.Selected}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  {{else if eq .Type "bool"}}
+    <select class="f-input" name="cfg_{{.Name}}">
+      <option value="true" {{if eq $f.Selected "true"}}selected{{end}}>true</option>
+      <option value="false" {{if eq $f.Selected "false"}}selected{{end}}>false</option>
+    </select>
+  {{else if eq .Type "int"}}
+    <input class="f-input" type="number" name="cfg_{{.Name}}" value="{{.Display}}">
+  {{else if eq .Type "list"}}
+    <input class="f-input" type="text" name="cfg_{{.Name}}" placeholder="空格分隔多个值" value="{{.Display}}">
+  {{else if .Secret}}
+    <input class="f-input" type="password" name="cfg_{{.Name}}" placeholder="{{if .SecretSet}}••••••（留空保持不变）{{else}}输入密钥值{{end}}" autocomplete="new-password">
+  {{else}}
+    <input class="f-input" type="text" name="cfg_{{.Name}}" value="{{.Display}}">
+  {{end}}
+  {{if .Help}}<div class="f-hint">{{.Help}}</div>{{end}}
+{{end}}
+{{end}}

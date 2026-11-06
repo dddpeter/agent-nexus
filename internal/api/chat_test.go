@@ -29,7 +29,7 @@ func TestChatPageFlow(t *testing.T) {
 	// 1) 聊天页（无会话）：agent 选择器
 	code, body := getUI(t, ts.URL, "/chat")
 	require.Equal(t, http.StatusOK, code)
-	assert.Contains(t, body, "选择一个 agent 开始")
+	assert.Contains(t, body, "选择 agent 开始对话")
 	assert.Contains(t, body, "echod-chat")
 	assert.Contains(t, body, `name="agent_id" value="`+id+`"`)
 
@@ -49,11 +49,12 @@ func TestChatPageFlow(t *testing.T) {
 	// 3) 会话页渲染：面板 + session id + 输入框 + 发送表单
 	code, body = getUI(t, ts.URL, loc)
 	require.Equal(t, http.StatusOK, code)
-	assert.Contains(t, body, "与 <b>echod-chat</b> 对话")
-	assert.Contains(t, body, "session "+sessID)
+	assert.Contains(t, body, "<b>echod-chat</b>")
+	assert.Contains(t, body, sessID)
 	assert.Contains(t, body, `hx-post="/ui/chat/send"`)
 	assert.Contains(t, body, `name="session_id" value="`+sessID+`"`)
 	assert.NotContains(t, body, "chat-stream-btn", "非流式 agent 不显示流式发送按钮")
+	assert.Contains(t, body, `hx-get="/ui/chat/sessions?current=`+sessID, "会话侧栏局部应挂载")
 
 	// 流式 agent 的会话页应显示流式按钮
 	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/ui/chat/session", strings.NewReader(url.Values{"agent_id": {streamID}}.Encode()))
@@ -76,6 +77,24 @@ func TestChatPageFlow(t *testing.T) {
 	assert.Contains(t, body, "聊天页第一条")
 	assert.Contains(t, body, `bubble human`)
 	assert.Contains(t, body, `bubble agent`)
+
+	// 4b) ?agent= 直达入口（详情页「开始私聊」）
+	resp3, _ := noRedirect.Do(func() *http.Request {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/chat?agent="+streamID, nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		return req
+	}())
+	loc3 := resp3.Header.Get("Location")
+	resp3.Body.Close()
+	require.Contains(t, loc3, "/chat?session=", "agent 直达应建会话并重定向")
+	code, body = getUI(t, ts.URL, loc3)
+	require.Equal(t, http.StatusOK, code)
+	assert.Contains(t, body, "<b>echod-chat-stream</b>")
+
+	// 4c) 会话侧栏局部
+	code, body = getUI(t, ts.URL, "/ui/chat/sessions?current="+sessID)
+	require.Equal(t, http.StatusOK, code)
+	assert.Contains(t, body, "echod-chat", "侧栏应列出 agent 名")
 
 	// 5) 消息局部端点（轮询源）
 	code, body = getUI(t, ts.URL, "/ui/chat/messages?session="+sessID)

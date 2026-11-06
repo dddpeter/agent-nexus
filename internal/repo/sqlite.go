@@ -294,6 +294,24 @@ func (r *sqliteSessionRepo) Update(ctx context.Context, s Session) error {
 	return requireUpdated(res, "session", s.ID)
 }
 
+func (r *sqliteSessionRepo) ListRecent(ctx context.Context, limit int) ([]Session, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+sessionCols+` FROM sessions ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("repo: list recent sessions: %w", err)
+	}
+	defer rows.Close()
+	var out []Session
+	for rows.Next() {
+		s, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 func (r *sqliteSessionRepo) ListByAgent(ctx context.Context, agentID string) ([]Session, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT `+sessionCols+` FROM sessions WHERE agent_id = ? ORDER BY created_at DESC`, agentID)
 	if err != nil {
