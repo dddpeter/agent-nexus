@@ -29,9 +29,10 @@ type Deps struct {
 
 // Server HTTP 接入层。
 type Server struct {
-	deps    Deps
-	router  chi.Router
-	limiter *rateLimiter
+	deps     Deps
+	router   chi.Router
+	limiter  *rateLimiter
+	sessions *sessionStore
 }
 
 // New 构造 API server 并挂载全部路由。
@@ -39,7 +40,8 @@ func New(deps Deps) *Server {
 	if deps.Log == nil {
 		deps.Log = slog.Default()
 	}
-	s := &Server{deps: deps, limiter: newRateLimiter(60, time.Minute)} // 60 req/min（U-F5-02）
+	// 60 req/min（U-F5-02）；会话存储供浏览器 cookie 鉴权（TODO#2）
+	s := &Server{deps: deps, limiter: newRateLimiter(60, time.Minute), sessions: newSessionStore(sessionTTL)}
 	s.mount()
 	return s
 }
@@ -49,7 +51,7 @@ func (s *Server) mount() {
 
 	r.Use(middlewareRecover(s.deps.Log))
 	r.Use(middlewareRequestID)
-	r.Use(middlewareAuth(s.deps.Cfg.Server.AuthToken, s.deps.Log))
+	r.Use(middlewareAuth(s.deps.Cfg.Server.AuthToken, s.sessions, s.deps.Log))
 	r.Use(middlewareRateLimit(s.limiter))
 	r.Use(middlewareLogger(s.deps.Log))
 

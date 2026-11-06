@@ -26,6 +26,11 @@ import (
 const testToken = "nexus-test-token"
 
 func newTestServer(t *testing.T) (*httptest.Server, *registry.Impl, repo.Store) {
+	return newTestServerToken(t, testToken)
+}
+
+// newTestServerToken 可指定 auth_token（空串 = 本地免登模式）。
+func newTestServerToken(t *testing.T, token string) (*httptest.Server, *registry.Impl, repo.Store) {
 	t.Helper()
 	store := repo.NewMemoryStore()
 	b, err := bus.New(store.Events(), bus.Options{FlushInterval: 10 * time.Millisecond})
@@ -38,7 +43,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *registry.Impl, repo.Store) 
 	t.Cleanup(reg.Close)
 
 	cfg := config.Default()
-	cfg.Server.AuthToken = testToken
+	cfg.Server.AuthToken = token
 	srv := api.New(api.Deps{Cfg: cfg, Store: store, Bus: b, Registry: reg})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

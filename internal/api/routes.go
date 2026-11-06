@@ -11,6 +11,11 @@ import (
 func (s *Server) mountAPI(r chi.Router) {
 	r.Get("/", s.handleAPIIndex)
 
+	// 浏览器会话（TODO#2：login/status 免鉴权在 auth 中间件放行，logout 需已登录）
+	r.Post("/auth/login", s.handleAuthLogin)
+	r.Get("/auth/status", s.handleAuthStatus)
+	r.Post("/auth/logout", s.handleAuthLogout)
+
 	// adapters（注册向导数据源）
 	r.Get("/adapters", s.handleListAdapters)
 

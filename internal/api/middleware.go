@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -118,13 +119,15 @@ func middlewareRecover(log *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// ---------- 鉴权（单用户 Bearer token，FR5.1）----------
+// ---------- 鉴权（单用户；双通道：Bearer 供 API/CLI，cookie 会话供浏览器，FR5.1 / TODO#2）----------
 
-func middlewareAuth(token string, log *slog.Logger) func(http.Handler) http.Handler {
+func middlewareAuth(token string, sessions *sessionStore, log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// 健康检查与静态资源放行
-			if r.URL.Path == "/healthz" || r.URL.Path == "/" || len(r.URL.Path) >= 6 && r.URL.Path[:6] == "/assets" {
+			// 免鉴权：健康检查、登录/状态查询、静态资源与页面
+			if r.URL.Path == "/healthz" || r.URL.Path == "/" ||
+				r.URL.Path == "/api/auth/login" || r.URL.Path == "/api/auth/status" ||
+				strings.HasPrefix(r.URL.Path, "/assets") {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -132,12 +135,17 @@ func middlewareAuth(token string, log *slog.Logger) func(http.Handler) http.Hand
 				next.ServeHTTP(w, r) // 未配置 token：本地开发模式放行（启动时已告警）
 				return
 			}
-			auth := r.Header.Get("Authorization")
-			if auth != "Bearer "+token {
-				writeError(w, r, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+			// Bearer（API/CLI）
+			if r.Header.Get("Authorization") == "Bearer "+token {
+				next.ServeHTTP(w, r)
 				return
 			}
-			next.ServeHTTP(w, r)
+			// 会话 cookie（SPA / EventSource）
+			if c, err := r.Cookie(sessionCookie); err == nil && sessions.valid(c.Value) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeError(w, r, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		})
 	}
 }
