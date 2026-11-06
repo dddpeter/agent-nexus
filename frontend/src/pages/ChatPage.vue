@@ -319,8 +319,12 @@ async function sendStream(content: string): Promise<void> {
                     :content="m.content"
                     :align="m.sender_type === 'human' ? 'right' : 'left'"
                     :loading="streaming && m.id === streamingId && !m.content"
-                    :avatar-config="{ name: senderLabel(m) }"
                   >
+                    <template #avatar>
+                      <span class="chat-avatar" :class="m.sender_type === 'human' ? 'is-human' : 'is-agent'">
+                        {{ senderLabel(m).charAt(0) }}
+                      </span>
+                    </template>
                     <template #top>
                       <span class="msg-meta">{{ senderLabel(m) }} · {{ clockTime(m.created_at) }}</span>
                     </template>
@@ -363,6 +367,28 @@ async function sendStream(content: string): Promise<void> {
   font-size: 11px;
   color: var(--ink-4);
   font-variant-numeric: tabular-nums;
+}
+/* 与详情页 .avatar 同族：mono 首字方块，agent 电青 / human 灰 */
+.chat-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r-m);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 16px var(--mono);
+  flex: none;
+}
+.chat-avatar.is-agent {
+  color: var(--signal);
+  background: var(--signal-wash);
+  border: 1.5px solid rgba(56, 225, 255, 0.45);
+  box-shadow: 0 0 10px rgba(56, 225, 255, 0.18);
+}
+.chat-avatar.is-human {
+  color: var(--ink);
+  background: var(--paper-3);
+  border: 1.5px solid var(--line-strong);
 }
 .chat-footer {
   padding: 10px 12px;
