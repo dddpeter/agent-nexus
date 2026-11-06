@@ -28,9 +28,6 @@ func (s *Server) mountAPI(r chi.Router) {
 	})
 }
 
-// mountWeb 挂载 Web 静态资源（任务 11 htmx 页面）。
-func (s *Server) mountWeb(r chi.Router) {}
-
 func (s *Server) handleAPIIndex(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name":    "nexus",
