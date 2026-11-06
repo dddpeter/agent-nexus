@@ -12,6 +12,7 @@ config/prod.yaml
 /nexus
 web/dist/
 frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
 
 # Go
 *.test
