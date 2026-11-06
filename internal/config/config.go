@@ -47,10 +47,10 @@ type Config struct {
 
 // AgentStatic 配置文件中的 agent 注册项。
 type AgentStatic struct {
-	Name         string                   `yaml:"name"`
-	Adapter      string                   `yaml:"adapter"`
-	Config       map[string]any           `yaml:"config"`
-	Capabilities *adapter.Capabilities    `yaml:"capabilities,omitempty"`
+	Name         string                `yaml:"name"`
+	Adapter      string                `yaml:"adapter"`
+	Config       map[string]any        `yaml:"config"`
+	Capabilities *adapter.Capabilities `yaml:"capabilities,omitempty"`
 }
 
 // Default 返回默认配置。

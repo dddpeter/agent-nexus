@@ -145,11 +145,11 @@ func middlewareAuth(token string, log *slog.Logger) func(http.Handler) http.Hand
 // ---------- 限流（简单窗口计数，60 req/min，U-F5-02）----------
 
 type rateLimiter struct {
-	mu      sync.Mutex
-	limit   int
-	window  time.Duration
-	start   time.Time
-	count   int
+	mu     sync.Mutex
+	limit  int
+	window time.Duration
+	start  time.Time
+	count  int
 }
 
 func newRateLimiter(limit int, window time.Duration) *rateLimiter {

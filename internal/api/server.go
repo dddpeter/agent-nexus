@@ -28,8 +28,8 @@ type Deps struct {
 
 // Server HTTP 接入层。
 type Server struct {
-	deps   Deps
-	router chi.Router
+	deps    Deps
+	router  chi.Router
 	limiter *rateLimiter
 }
 
