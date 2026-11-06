@@ -25,6 +25,7 @@ func (s *Server) mountAPI(r chi.Router) {
 	// 私聊会话（任务 12-14）
 	if s.deps.Router != nil {
 		r.Post("/sessions", s.handleCreateSession)
+		r.Get("/sessions", s.handleRecentSessions) // 聊天侧栏：最近会话（跨 agent）
 		r.Route("/sessions/{id}", func(r chi.Router) {
 			r.Get("/", s.handleGetSession)
 			r.Get("/messages", s.handleSessionMessages)

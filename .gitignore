@@ -10,6 +10,8 @@ config/prod.yaml
 /dist/
 *.exe
 /nexus
+web/dist/
+frontend/node_modules/
 
 # Go
 *.test

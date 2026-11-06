@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -204,6 +205,26 @@ func (s *Server) streamSessionSend(w http.ResponseWriter, r *http.Request, sessi
 			return
 		}
 	}
+}
+
+// GET /api/sessions?limit=20 最近会话（聊天侧栏数据源；跨 agent）。
+func (s *Server) handleRecentSessions(w http.ResponseWriter, r *http.Request) {
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	sessions, err := s.deps.Store.Sessions().ListRecent(r.Context(), limit)
+	if err != nil {
+		mapWriteError(w, r, err)
+		return
+	}
+	out := make([]sessionDTO, 0, len(sessions))
+	for _, sess := range sessions {
+		out = append(out, toSessionDTO(sess))
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // GET /api/agents/{id}/sessions agent 的历史会话（软删后仍可查，C-F1-05）。
