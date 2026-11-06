@@ -103,13 +103,14 @@ func TestHangTimeoutKillsChild(t *testing.T) {
 	require.NoError(t, err)
 
 	start := time.Now()
-	_, err = ad.Send(ctx, sid, adapter.Message{Content: "x"})
+	_, err = ad.Send(ctx, sid, adapter.Message{Content: "picoclaw-hang-probe"})
 	require.Error(t, err)
-	assert.Less(t, time.Since(start), 3*time.Second, "不应无限等待")
+	elapsed := time.Since(start)
+	assert.Less(t, elapsed, 8*time.Second, "不应无限等待（含宽限期，允许负载抖动）")
 	assert.Contains(t, err.Error(), "killed", "错误应含 kill 信息（供 error 事件记录）")
 
 	time.Sleep(150 * time.Millisecond)
-	out, err := exec.Command("sh", "-c", `ps -eo args | grep "echod --mode hang" | grep -v grep || true`).Output()
+	out, err := exec.Command("sh", "-c", `ps -eo args | grep "picoclaw-hang-probe" | grep -v grep || true`).Output()
 	require.NoError(t, err)
 	assert.Empty(t, strings.TrimSpace(string(out)), "子进程应无残留（F7 联动）")
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -141,12 +142,13 @@ func New(store repo.Store, b bus.Bus, factories []adapter.AdapterFactory, opts O
 // Factory 返回指定类型的工厂（nil 表示未安装）。
 func (r *Impl) Factory(name string) adapter.AdapterFactory { return r.factories[name] }
 
-// Factories 全部已安装工厂（GET /api/adapters 数据源）。
+// Factories 全部已安装工厂（GET /api/adapters 数据源；按名字稳定排序）。
 func (r *Impl) Factories() []adapter.AdapterFactory {
 	out := make([]adapter.AdapterFactory, 0, len(r.factories))
 	for _, f := range r.factories {
 		out = append(out, f)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out
 }
 

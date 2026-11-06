@@ -215,11 +215,11 @@ func TestEchodCLIStream(t *testing.T) {
 func TestEchodCLIHangGroupKill_U_F7_01(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
 	defer cancel()
-	res := execx.Run(ctx, execx.Options{Bin: echodBinary(t), Args: []string{"--mode", "hang", "-p", "x"}})
+	res := execx.Run(ctx, execx.Options{Bin: echodBinary(t), Args: []string{"--mode", "hang", "-p", "echo-hang-probe"}})
 	require.True(t, res.Killed)
 	require.ErrorIs(t, res.Err, execx.ErrTimeout)
 	time.Sleep(100 * time.Millisecond)
-	out, err := exec.Command("sh", "-c", `ps -eo args | grep "echod --mode hang" | grep -v grep || true`).Output()
+	out, err := exec.Command("sh", "-c", `ps -eo args | grep "echo-hang-probe" | grep -v grep || true`).Output()
 	require.NoError(t, err)
 	assert.Empty(t, strings.TrimSpace(string(out)), "echod 挂起进程应被整组清理")
 }

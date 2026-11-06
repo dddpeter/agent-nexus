@@ -179,10 +179,10 @@ func (r *Router) SendMessage(ctx context.Context, sessionID, content string, mod
 func (r *Router) sendSync(ctx context.Context, sess repo.Session, content string) (SendResult, error) {
 	agentID := *sess.AgentID
 
-	// 并发闸门 + offline 判定（F2.4：offline 409 不排队）
+	// 并发闸门 + offline 判定（F2.4：offline 409 不排队；agent 不存在 404）
 	release, err := r.reg.Acquire(ctx, agentID)
 	if err != nil {
-		return SendResult{}, fmt.Errorf("%w: %v", ErrAgentUnavailable, err)
+		return SendResult{}, fmt.Errorf("%w: %w", ErrAgentUnavailable, err)
 	}
 	defer release()
 
@@ -497,7 +497,7 @@ func (r *Router) StreamMessage(ctx context.Context, sessionID, content string) (
 	agentID := *sess.AgentID
 	release, err := r.reg.Acquire(ctx, agentID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrAgentUnavailable, err)
+		return nil, nil, fmt.Errorf("%w: %w", ErrAgentUnavailable, err)
 	}
 	ad, err := r.reg.Adapter(agentID)
 	if err != nil {

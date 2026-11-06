@@ -17,6 +17,17 @@ func (s *Server) mountAPI(r chi.Router) {
 	// SSE 全局流（断线 Last-Event-ID 补偿重放）
 	r.Get("/stream", s.handleGlobalStream)
 
+	// 私聊会话（任务 12-14）
+	if s.deps.Router != nil {
+		r.Post("/sessions", s.handleCreateSession)
+		r.Route("/sessions/{id}", func(r chi.Router) {
+			r.Get("/", s.handleGetSession)
+			r.Get("/messages", s.handleSessionMessages)
+			r.Post("/messages", s.handleSessionSend)
+		})
+		r.Get("/agents/{id}/sessions", s.handleAgentSessions)
+	}
+
 	// agents
 	r.Post("/agents", s.handleRegisterAgent)
 	r.Get("/agents", s.handleListAgents)

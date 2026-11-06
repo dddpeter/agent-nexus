@@ -14,15 +14,16 @@ import (
 	"github.com/dddpeter/agent-nexus/internal/config"
 	"github.com/dddpeter/agent-nexus/internal/registry"
 	"github.com/dddpeter/agent-nexus/internal/repo"
+	"github.com/dddpeter/agent-nexus/internal/session/private"
 )
 
 // Deps API 层依赖（全部为下层公开接口；api 不得被下层 import）。
-// Router（私聊会话路由）在任务 12 接入时补充。
 type Deps struct {
 	Cfg      config.Config
 	Store    repo.Store
 	Bus      bus.Bus
 	Registry *registry.Impl
+	Router   *private.Router // 私聊会话路由（任务 12 起）
 	Log      *slog.Logger
 }
 
