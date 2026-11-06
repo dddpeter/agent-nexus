@@ -18,6 +18,7 @@
 | 9 | picoclaw adapter（CLI 范式） | ✅ | `c18ff27` |
 | 10 | F1 页面注册闭环后端（adapters/注册/编辑/测试/停用/软删/脱敏/回滚） | ✅ | `d4fa1a9` |
 | 11 | htmx 最简页面（agent 列表 + 注册向导，无其他页面） | ✅ | `6a960b2` |
+| 11b | 私聊聊天页（M2 浏览器双向聊天，白天补充） | ✅ | `41a727a` |
 | 12 | F2 私聊会话 Router（双模式/续话/上下文窗口/异步回执/超时策略） | ✅ | `87ee903` `33f644b` |
 | 13 | SSE /api/stream + Last-Event-ID 补偿重放 | ✅ | `c437921` |
 | 14 | 私聊 API（POST /api/sessions、messages sync/async/stream）+ orchestr builtin | ✅ | `9c9c358` |
@@ -68,7 +69,7 @@
 | U-F5-03 SSE 重放不丢不重 | ✅ PASS | TestSSEReplayLastEventID_U_F5_03（恰好 6,7,8） |
 | U-F5-04 统一错误结构 | ✅ PASS | TestErrorEnvelope_U_F5_04 |
 | U-F5-05 CLI REPL | ⏭️ 未做 | 任务 7 范围限定 serve/list/register（TODO#10） |
-| C-F5-01 Web 全页面走查 | ⏭️ 部分 | 仅做了范围内两页面（列表+向导）自动冒烟；群聊/任务页属后续里程碑 |
+| C-F5-01 Web 全页面走查 | ⏭️ 部分 | 列表+向导+私聊聊天页（`/chat`，含 SSE 实时刷新与流式发送）已自动冒烟；群聊/任务页属后续里程碑 |
 | U-F6-01 千事件全量落库 | ✅ PASS | `internal/bus` TestBusPersistAllEvents（700ms 内断言） |
 | U-F6-02 慢订阅丢弃计数+1 | ✅ PASS | TestBusSlowSubscriberDropped（9/10 丢弃） |
 | U-F6-03 三订阅者全量独立 | ✅ PASS | TestBusThreeSubscribersAllEvents |
