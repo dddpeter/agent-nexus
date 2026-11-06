@@ -14,7 +14,9 @@
 
 ### F1.2 功能需求
 
-- FR1.1 注册：通过 API/配置文件登记 agent，指定 adapter 类型与专有配置
+- FR1.1 注册：三种途径——**Web UI 注册向导**、REST API、配置文件（启动时批量载入）；三者最终收敛到同一 `Register(spec)` 入口，语义一致
+- FR1.1a **页面注册向导**：选 adapter 类型 → 动态渲染该 adapter 的配置表单（adapter 声明自己的 config schema）→ 填写能力参数（CanGroupChat/MaxConcurrency 等）→ 在线测试连通性（探活/试发一条消息）→ 提交注册
+- FR1.1b **页面配置管理**：已注册 agent 的查看/编辑配置/停用/软删；配置变更需通过连通性测试才允许保存生效；密钥字段（api_key 等）页面回显脱敏，留空表示不修改
 - FR1.2 能力声明：`CanGroupChat / CanStream / MaxConcurrency / TypicalLatency / InterruptLevel`
 - FR1.3 状态机：`offline → online → busy → online`（busy 由并发闸门自动推导，不可手工设置）
 - FR1.4 心跳：周期探活，连续 N 次失败自动 offline；恢复自动 online
@@ -36,6 +38,8 @@ type Registry interface {
 ```
 
 - Registry 内聚合 **AdapterFactory**：`adapter.New(name, config) (AgentAdapter, error)`，注册即实例化 adapter；配置校验失败直接拒绝注册
+- **ConfigSchema 声明式表单**：每种 adapter 实现暴露 `ConfigSchema() Schema`（字段名/类型/必填/默认值/是否密钥），Web UI 注册向导据此动态渲染表单——新增 adapter 无需写任何前端页面
+- **连通性测试**（`registry.TestConnection(spec)`）：用待保存的配置临时实例化 adapter，执行探活 + 可选试发消息，返回耗时与错误详情；页面「保存」与「测试」分离，测试通过才允许启用
 - 心跳器：每 agent 独立 ticker（间隔可配，默认 15s）。CLI 型执行探活命令（如 `picoclaw --version`，超时 5s）；HTTP 型 GET health。结果写 `agents.last_heartbeat_at / status`
 - 状态变更发布 `agent.status` 事件（含 from/to/reason）
 - busy 推导：`inFlight >= MaxConcurrency` 时 API 层展示 busy，信号量本身用 `golang.org/x/sync/semaphore`
@@ -46,6 +50,8 @@ type Registry interface {
 | 场景 | 行为 |
 |---|---|
 | adapter 专有配置校验失败 | 注册拒绝，400 返回具体字段错误 |
+| 页面连通性测试失败 | 保留表单，展示错误详情（连接 refused / 探活命令非零 / 超时）；允许保存为 disabled 状态 |
+| 页面配置变更后探活失败 | 变更不生效回滚旧配置，提示失败原因；旧配置期间 agent 状态不变 |
 | 探活超时/非零退出 | 计失败数，达阈值 → offline + 事件 |
 | offline 期间收到 Acquire | 返回 `ErrAgentOffline`，编排层转可重试错误 |
 | 注册重名 | 409，提示先注销或改名 |
@@ -223,7 +229,7 @@ REST API + SSE 为底座，Web UI（htmx）与 CLI（`nexus` 命令）双入口�
 
 - FR5.1 API 全集（见技术设计 §8）+ Bearer token 鉴权
 - FR5.2 SSE：`/api/stream`（全局）、`/api/groups/{id}/stream`、私聊消息流
-- FR5.3 Web UI 页面：Agent 列表（状态/健康）、私聊聊天页、群聊页（含仲裁可视化：谁被 Deferred 及原因）、任务列表与详情（DAG 进度）、配置页（阈值热调）
+- FR5.3 Web UI 页面：Agent 列表（状态/健康）、**Agent 注册向导**（选 adapter → ConfigSchema 动态表单 → 连通性测试 → 启用）、**Agent 详情/配置编辑页**（脱敏回显、变更测试、停用/软删）、私聊聊天页、群聊页（含仲裁可视化：谁被 Deferred 及原因）、任务列表与详情（DAG 进度）、配置页（阈值热调）
 - FR5.4 CLI 子命令：`nexus serve / agent list / agent register / chat <agent> / group send / task submit / task status`；`chat` 支持交互式 REPL
 
 ### F5.3 详细设计

@@ -197,6 +197,11 @@ func (a *Arbiter) Evaluate(ctx context.Context, in Input) Decision
 ```
 POST   /api/agents                  注册 agent（adapter+config+capabilities）
 GET    /api/agents                  列表与健康状态
+GET    /api/agents/{id}             详情（config 脱敏回显）
+PUT    /api/agents/{id}             更新配置/能力（变更前自动连通性测试，失败可指定 force）
+POST   /api/agents/{id}/test        连通性测试（不落库，返回耗时与错误详情）
+GET    /api/adapters                已安装 adapter 清单及其 ConfigSchema（注册向导动态表单数据源）
+POST   /api/agents/{id}/disable     停用 / enable 启用 / DELETE 软删
 POST   /api/sessions                建私聊会话 {agent_id}
 POST   /api/sessions/{id}/messages  发消息（同步等回复 or SSE 订阅）
 POST   /api/groups                  建群（成员+仲裁配置）

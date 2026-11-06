@@ -98,7 +98,7 @@ type AgentAdapter interface {
 ### 里程碑（约 9-10 周全职，业余 ×2.5）
 
 - M0（1 周）：骨架——事件总线 + SQLite + AgentAdapter 接口 + Registry；`echod` fake agent 收发回显。
-- M1（2 周）：接 Hermes（HTTP 型）+ PicoClaw（CLI 型），覆盖两种驱动范式；CLI 派任务拿回真实回复。
+- M1（2 周）：接 Hermes（HTTP 型）+ PicoClaw（CLI 型），覆盖两种驱动范式；页面注册/配置/连通性测试闭环（C-F1-02~05）；CLI 派任务拿回真实回复。
 - M2（2 周）：私聊 + Web UI——路由、续话、SSE 实时回复、任务列表；浏览器双向聊天。
 - M3（2-3 周）：群聊 + 仲裁——@路由、发言预算、防死循环；人+2 agent 讨论不失控。
 - M4（2 周）：编排——协作链 DAG、定时任务、异步回报、补接 OpenCode/OpenClaw；流水线+cron 日报跑通。
