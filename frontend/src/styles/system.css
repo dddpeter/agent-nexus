@@ -140,7 +140,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .step::after { content: ""; flex: 1; height: 1px; background: var(--line-strong); margin: 0 8px; }
 .step:last-child::after { display: none; }
 
-/* ---------- 聊天 ---------- */
+/* ---------- 聊天（气泡与输入区由 MateChat McBubble/McInput 承载）---------- */
 .chat-layout { display: grid; grid-template-columns: 260px 1fr; gap: var(--sp-4); align-items: stretch; }
 @media (max-width: 860px) { .chat-layout { grid-template-columns: 1fr; } }
 .sess-list a { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 12px; border-radius: var(--r-s); color: var(--ink-2); font-size: 13px; border: 1px solid transparent; margin-bottom: 2px; }
@@ -148,19 +148,8 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .sess-list a.on { background: var(--signal-wash); color: var(--signal-deep); border-color: #f3d5c4; }
 .chat-box { display: flex; flex-direction: column; height: 560px; }
 .chat-history { flex: 1; overflow-y: auto; padding: var(--sp-4); background: var(--paper-2); border: 1px solid var(--line-strong); border-bottom: none; border-radius: var(--r-m) var(--r-m) 0 0; }
-.bubble { max-width: 76%; margin: 7px 0; padding: 9px 13px; border-radius: 10px; font-size: 13.5px; white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
-.bubble .who { display: block; font-size: 11px; color: var(--ink-4); margin-bottom: 2px; font-variant-numeric: tabular-nums; }
-.bubble.human { align-self: flex-end; background: var(--ink); color: var(--paper); border-bottom-right-radius: 3px; }
-.bubble.human .who { color: #b9bac0; }
-.bubble.agent { align-self: flex-start; background: var(--paper); border: 1px solid var(--line-strong); border-bottom-left-radius: 3px; }
-.bubble.system { align-self: center; background: var(--paper); border: 1px dashed var(--line-strong); color: var(--ink-3); font-size: 12px; }
+.bubble.system { align-self: center; background: var(--paper); border: 1px dashed var(--line-strong); color: var(--ink-3); font-size: 12px; padding: 7px 12px; border-radius: 10px; max-width: 76%; white-space: pre-wrap; }
 .chat-empty { text-align: center; color: var(--ink-4); font-size: 13px; padding: 48px 0; }
-.chat-input-bar { display: flex; gap: var(--sp-2); padding: var(--sp-3); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 0 0 var(--r-m) var(--r-m); }
-.chat-input-bar input { flex: 1; }
-.typing { display: inline-flex; gap: 4px; align-items: center; }
-.typing i { width: 5px; height: 5px; border-radius: 99px; background: var(--ink-4); animation: blink 1.2s infinite; }
-.typing i:nth-child(2) { animation-delay: .2s; } .typing i:nth-child(3) { animation-delay: .4s; }
-@keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 
 /* ---------- 空状态：给方向，不做氛围 ---------- */
 .empty { text-align: center; padding: 44px var(--sp-4); color: var(--ink-3); }

@@ -4,7 +4,12 @@
 // 兜底：SSE 断线由 EventSource 自动重连（Last-Event-ID 服务端补偿重放），另加 30s 轮询。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { createSession, getSession, recentSessions, sendSync, sessionMessages, streamSend } from '../api/sessions'
+// MateChat 按需子路径引入（全入口会连带 MarkdownCard → mermaid 可选依赖）
+import { McBubble } from '@matechat/core/Bubble'
+import { McInput } from '@matechat/core/Input'
+import '@matechat/core/Bubble/index.css'
+import '@matechat/core/Input/index.css'
+import { createSession, getSession, recentSessions, sendSync as sendSyncApi, sessionMessages, streamSend } from '../api/sessions'
 import { getAgent } from '../api/agents'
 import type { Agent, Message, Session } from '../api/types'
 import { useAgents } from '../stores/agents'
@@ -25,6 +30,7 @@ const flash = ref('')
 
 const sending = ref(false)
 const streaming = ref(false)
+const streamingId = ref<number | null>(null) // 流式中乐观气泡 id（首帧 delta 前走 McBubble loading 态）
 
 const historyEl = ref<HTMLElement | null>(null)
 
@@ -37,15 +43,10 @@ function agentName(id: string): string {
   return agentsStore.byId(id)?.name ?? id
 }
 
-function bubbleClass(senderType: string): string {
-  if (senderType === 'human') return 'human'
-  if (senderType === 'agent') return 'agent'
-  return 'system'
-}
-
-function bubbleLabel(senderType: string): string {
-  if (senderType === 'human') return '你'
-  if (senderType === 'agent') return 'Agent'
+/** McBubble 头像与 top 插槽文案：你 / agent 名 / 系统。 */
+function senderLabel(m: Message): string {
+  if (m.sender_type === 'human') return '你'
+  if (m.sender_type === 'agent') return agentName(m.sender_id)
   return '系统'
 }
 
@@ -165,13 +166,12 @@ function notifyError(msg: string): void {
   setTimeout(() => (flash.value = ''), 6000)
 }
 
-async function sendSyncMsg(): Promise<void> {
-  const content = input.value.trim()
-  if (!content || !session.value || sending.value) return
-  input.value = ''
+async function sendSync(content: string): Promise<void> {
+  const text = content.trim()
+  if (!text || !session.value || sending.value) return
   sending.value = true
   try {
-    const res = await sendSync(session.value.id, content)
+    const res = await sendSyncApi(session.value.id, text)
     if (res.timed_out) notifyError('回复超时：已留占位消息，会话保留可重发')
     await loadMessages()
     void loadSessions()
@@ -183,7 +183,13 @@ async function sendSyncMsg(): Promise<void> {
   }
 }
 
-/** 流式发送：乐观插入 human 气泡 + typing 气泡，delta 渐进追加。 */
+/** McInput 回车/点击发送（autoClear 清空内部值，受控 value 需同步清空）。 */
+function onSubmit(content: string): void {
+  input.value = ''
+  void sendSync(content)
+}
+
+/** 流式发送：乐观插入 human 气泡 + agent 气泡（首帧前 loading 态），delta 渐进追加。 */
 async function sendStreamMsg(): Promise<void> {
   const content = input.value.trim()
   if (!content || !session.value || streaming.value) return
@@ -204,6 +210,7 @@ async function sendStreamMsg(): Promise<void> {
     content: '',
     created_at: new Date().toISOString(),
   }
+  streamingId.value = streamMsg.id
   messages.value = [...messages.value, optimistic, streamMsg]
   void nextTick(() => {
     const el = historyEl.value
@@ -227,6 +234,7 @@ async function sendStreamMsg(): Promise<void> {
     messages.value = [...messages.value]
   } finally {
     streaming.value = false
+    streamingId.value = null
   }
 }
 </script>
@@ -298,28 +306,47 @@ async function sendStreamMsg(): Promise<void> {
           <div class="chat-box">
             <div ref="historyEl" class="chat-history">
               <div v-if="flash" class="callout bad" style="margin: 8px 12px">{{ flash }}</div>
-              <div style="display: flex; flex-direction: column; padding: 4px 0">
-                <div v-for="m in messages" :key="m.id" class="bubble" :class="bubbleClass(m.sender_type)">
-                  <span class="who">{{ bubbleLabel(m.sender_type) }} · {{ clockTime(m.created_at) }}</span>{{ m.content }}
-                </div>
+              <div style="display: flex; flex-direction: column; gap: 10px; padding: 8px 0">
+                <template v-for="m in messages" :key="m.id">
+                  <div v-if="m.sender_type === 'system'" class="bubble system">{{ m.content }}</div>
+                  <McBubble
+                    v-else
+                    :content="m.content"
+                    :align="m.sender_type === 'human' ? 'right' : 'left'"
+                    :loading="streaming && m.id === streamingId && !m.content"
+                    :avatar-config="{ name: senderLabel(m) }"
+                  >
+                    <template #top>
+                      <span class="msg-meta">{{ senderLabel(m) }} · {{ clockTime(m.created_at) }}</span>
+                    </template>
+                  </McBubble>
+                </template>
                 <div v-if="!messages.length" class="chat-empty">还没有消息，说点什么吧</div>
               </div>
             </div>
 
-            <form class="chat-input-bar" @submit.prevent="sendSyncMsg">
-              <input
-                v-model="input"
-                class="f-input"
-                type="text"
+            <div class="chat-footer">
+              <McInput
+                :value="input"
                 placeholder="输入消息，回车发送…"
-                autocomplete="off"
-                required
-              />
-              <button v-if="canStream" class="btn btn-secondary" type="button" :disabled="streaming" @click="sendStreamMsg">
-                {{ streaming ? '生成中…' : '流式' }}
-              </button>
-              <button class="btn btn-primary" type="submit" :disabled="sending">发送</button>
-            </form>
+                :max-length="2000"
+                show-count
+                @change="(e: string) => (input = e)"
+                @submit="onSubmit"
+              >
+                <template #extra>
+                  <button
+                    v-if="canStream"
+                    class="btn btn-secondary btn-sm"
+                    type="button"
+                    :disabled="streaming"
+                    @click="sendStreamMsg"
+                  >
+                    {{ streaming ? '生成中…' : '流式' }}
+                  </button>
+                </template>
+              </McInput>
+            </div>
           </div>
         </div>
       </div>
@@ -337,3 +364,17 @@ async function sendStreamMsg(): Promise<void> {
     </div>
   </div>
 </template>
+
+<style scoped>
+.msg-meta {
+  font-size: 11px;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+.chat-footer {
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 0 0 var(--r-m) var(--r-m);
+}
+</style>
