@@ -17,7 +17,9 @@
 - FR1.1 注册：三种途径——**Web UI 注册向导**、REST API、配置文件（启动时批量载入）；三者最终收敛到同一 `Register(spec)` 入口，语义一致
 - FR1.1a **页面注册向导**：选 adapter 类型 → 动态渲染该 adapter 的配置表单（adapter 声明自己的 config schema）→ 填写能力参数（CanGroupChat/MaxConcurrency 等）→ 在线测试连通性（探活/试发一条消息）→ 提交注册
 - FR1.1b **页面配置管理**：已注册 agent 的查看/编辑配置/停用/软删；配置变更需通过连通性测试才允许保存生效；密钥字段（api_key 等）页面回显脱敏，留空表示不修改
-- FR1.2 能力声明：`CanGroupChat / CanStream / MaxConcurrency / TypicalLatency / InterruptLevel`
+- FR1.2 能力声明：`CanGroupChat / CanStream / MaxConcurrency / TypicalLatency / InterruptLevel / DisableSync`
+  （`DisableSync` 声明不支持同步发送——仅流式 agent 如伪流式假 agent；取反语义零值=支持同步，
+  与能力覆盖「non-zero 才合并」自洽；不支持的模式调用返回 409 `mode_not_supported`）
 - FR1.3 状态机：`offline → online → busy → online`（busy 由并发闸门自动推导，不可手工设置）
 - FR1.4 心跳：周期探活，连续 N 次失败自动 offline；恢复自动 online
 - FR1.5 并发闸门：per-agent 信号量，容量 = MaxConcurrency；满时调用方进入排队

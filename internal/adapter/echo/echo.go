@@ -92,6 +92,7 @@ func (a *Adapter) Info() adapter.AgentInfo {
 	caps.TypicalLatency = adapter.Duration(50 * time.Millisecond)
 	if a.mode() == ModeStream {
 		caps.CanStream = true
+		caps.DisableSync = true // 伪流式模式不支持同步 Send（U-F2-03）
 	}
 	return adapter.AgentInfo{ID: a.id, Name: "echod", Adapter: "echod", Capabilities: caps}
 }

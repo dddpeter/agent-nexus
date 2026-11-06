@@ -38,6 +38,8 @@ const offs: Array<() => void> = []
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const canStream = computed(() => agent.value?.capabilities.can_stream ?? false)
+/** agent 是否支持同步发送（disable_sync 声明 = 仅流式）；缺省视为支持。 */
+const canSync = computed(() => !(agent.value?.capabilities.disable_sync ?? false))
 
 function agentName(id: string): string {
   return agentsStore.byId(id)?.name ?? id
@@ -185,6 +187,10 @@ async function sendSync(content: string): Promise<void> {
 
 /** McInput 回车/点击发送（autoClear 清空内部值，受控 value 需同步清空）。 */
 function onSubmit(content: string): void {
+  if (!canSync.value) {
+    notifyError('该 agent 仅支持流式发送，请点「流式」按钮')
+    return
+  }
   input.value = ''
   void sendSync(content)
 }

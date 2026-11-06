@@ -28,6 +28,10 @@ type Capabilities struct {
 	TypicalLatency Duration `json:"typical_latency" yaml:"typical_latency"`
 	// InterruptLevel: 0=禁止插话 1=可申请 2=可直接插。
 	InterruptLevel int `json:"interrupt_level" yaml:"interrupt_level"`
+	// DisableSync 声明不支持同步发送（仅流式，如伪流式假 agent）。
+	// 零值 false = 支持同步（存量 capabilities_json 无此字段时天然正确）；
+	// 取反语义使其与 MergeDefaults「non-zero 才覆盖」自洽：声明后不可被注册覆盖强行打开。
+	DisableSync bool `json:"disable_sync,omitempty" yaml:"disable_sync,omitempty"`
 }
 
 // DefaultCapabilities 返回保守默认值（宁严勿松）。
@@ -56,6 +60,9 @@ func (c Capabilities) MergeDefaults(d Capabilities) Capabilities {
 	}
 	if c.InterruptLevel > 0 {
 		out.InterruptLevel = c.InterruptLevel
+	}
+	if c.DisableSync {
+		out.DisableSync = true
 	}
 	return out
 }

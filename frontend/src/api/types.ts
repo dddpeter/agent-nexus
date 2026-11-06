@@ -6,6 +6,8 @@ export interface Capabilities {
   max_concurrency: number
   typical_latency: string // Duration 序列化为 "1.5s"
   interrupt_level: number // 0=禁止插话 1=可申请 2=可直接插
+  /** 声明不支持同步发送（仅流式 agent）；缺省 = 支持同步 */
+  disable_sync?: boolean
 }
 
 export interface Agent {
