@@ -1,0 +1,140 @@
+{{define "content"}}
+<div class="card" id="chat-root" data-session="{{if .V.Session}}{{.V.Session.ID}}{{end}}">
+  {{if .V.Session}}
+    {{template "chat_panel" .V}}
+  {{else}}
+    {{template "chat_picker" .V}}
+  {{end}}
+</div>
+{{end}}
+
+{{define "chat_picker"}}
+  <h2 style="font-size:15px; margin:0 0 4px;">私聊会话</h2>
+  <p class="hint">选择一个 agent 开始 1v1 对话（F2 私聊）。</p>
+  <table>
+    <thead><tr><th>Agent</th><th>状态</th><th>能力</th><th></th></tr></thead>
+    <tbody>
+      {{range .Agents}}
+      <tr>
+        <td><b>{{.Name}}</b><div class="hint mono">{{.ID}}</div></td>
+        <td><span class="badge {{.Status}}">{{.Status}}</span></td>
+        <td class="hint">{{if .Capabilities.CanStream}}stream{{end}}</td>
+        <td>
+          <form method="post" action="/ui/chat/session">
+            <input type="hidden" name="agent_id" value="{{.ID}}">
+            <button class="secondary" type="submit">开始对话</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="4" class="hint">暂无可用 agent，先去 <a href="/agents/new">注册</a>。</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+{{end}}
+
+{{define "chat_panel"}}
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+    <div>
+      <h2 style="font-size:15px; margin:0;">与 <b>{{.Agent.Name}}</b> 对话
+        <span class="badge {{.Agent.Status}}">{{.Agent.Status}}</span></h2>
+      <div class="hint mono">session {{.Session.ID}}</div>
+    </div>
+    <a class="hint" href="/chat">← 换个 agent</a>
+  </div>
+
+  <div id="chat-messages"
+       hx-get="/ui/chat/messages?session={{.Session.ID}}"
+       hx-trigger="every 4s, refresh from:body"
+       hx-swap="innerHTML">
+    {{template "chat_messages" (chatMessagesData .Messages "" .Session.ID)}}
+  </div>
+
+  <form id="chat-form" hx-post="/ui/chat/send" hx-target="#chat-messages" hx-swap="innerHTML"
+        style="display:flex; gap:8px; margin-top:12px;">
+    <input type="hidden" name="session_id" value="{{.Session.ID}}">
+    <input type="text" id="chat-input" name="content" placeholder="输入消息，回车发送…" autocomplete="off" required>
+    {{if .Agent.Capabilities.CanStream}}
+    <button type="button" class="secondary" id="chat-stream-btn" onclick="chatSendStream()">流式发送</button>
+    {{end}}
+    <button type="submit">发送</button>
+  </form>
+  <script>
+    (function(){
+      const root = document.getElementById('chat-root');
+      const sid = root.dataset.session;
+      if (!sid || !window.EventSource) return;
+      // 订阅全局 SSE：本会话相关事件（agent 回复/异步回填）触发即时刷新
+      const es = new EventSource('/api/stream');
+      ['msg.human','msg.agent','msg.system'].forEach(function(t){
+        es.addEventListener(t, function(e){
+          try {
+            const d = JSON.parse(e.data);
+            if (d.session_id === sid) htmx.trigger(document.body, 'refresh');
+          } catch(_) {}
+        });
+      });
+    })();
+
+    // 流式发送：fetch 读 SSE 分块，delta 渐进渲染（仅 CanStream agent 显示该按钮）
+    function chatSendStream(){
+      const root = document.getElementById('chat-root');
+      const inp = document.getElementById('chat-input');
+      const content = inp.value.trim();
+      if (!content) return;
+      inp.value = '';
+      const box = document.getElementById('chat-messages');
+      appendBubble(box, 'human', content);
+      const agentBub = appendBubble(box, 'agent', '');
+      fetch('/api/sessions/' + root.dataset.session + '/messages', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({content: content, mode: 'stream'})
+      }).then(function(resp){
+        if (!resp.ok || !resp.body) { agentBub.textContent = '流式发送失败：HTTP ' + resp.status; return; }
+        const reader = resp.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        function pump(){
+          reader.read().then(function(r){
+            if (r.done) { htmx.trigger(document.body, 'refresh'); return; }
+            buf += dec.decode(r.value, {stream: true});
+            let idx;
+            while ((idx = buf.indexOf('\n\n')) >= 0) {
+              const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+              const line = frame.split('\n').find(function(l){return l.indexOf('data: ')===0;});
+              if (!line) continue;
+              let ev; try { ev = JSON.parse(line.slice(6)); } catch(_) { continue; }
+              if (ev.type === 'delta' || ev.type === 'final') agentBub.textContent += ev.data;
+              if (ev.type === 'error') agentBub.textContent += '[error] ' + ev.data;
+            }
+            pump();
+          });
+        }
+        pump();
+      }).catch(function(err){ agentBub.textContent += '[network] ' + err; });
+    }
+    function appendBubble(box, kind, text){
+      const div = document.createElement('div');
+      div.className = 'bubble ' + kind;
+      div.textContent = text;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+      return div;
+    }
+  </script>
+{{end}}
+
+{{define "chat_messages"}}
+{{if .Flash}}<div class="chat-flash">{{.Flash}}</div>{{end}}
+<div class="chat-history">
+  {{range .Messages}}
+    <div class="bubble {{bubbleClass .SenderType}}">
+      <div class="hint">{{bubbleLabel .SenderType}} · {{formatTimePtr .CreatedAt}}</div>
+      <div class="bubble-text">{{.Content}}</div>
+    </div>
+  {{else}}
+    <div class="hint">还没有消息，说点什么吧。</div>
+  {{end}}
+</div>
+{{end}}

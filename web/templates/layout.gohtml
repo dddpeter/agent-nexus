@@ -34,6 +34,16 @@
   .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size:12px; }
   .row-actions form { display:inline-block; margin:0; }
   .row-actions button { margin:0 0 0 6px; padding:3px 10px; font-size:12px; }
+  .chat-history { display:flex; flex-direction:column; height:380px; overflow-y:auto; padding:10px;
+    border:1px solid var(--border); border-radius:8px; background:#fbfcfd; }
+  .bubble { max-width:78%; margin:6px 0; padding:8px 12px; border-radius:12px; font-size:13px;
+    white-space:pre-wrap; word-break:break-word; }
+  .bubble.human { align-self:flex-end; background:var(--accent); color:#fff; }
+  .bubble.human .hint { color:#dbeafe; }
+  .bubble.agent { align-self:flex-start; background:#eef2f7; }
+  .bubble.system { align-self:center; background:#f8fafc; color:var(--muted); font-size:12px;
+    border:1px dashed var(--border); }
+  .chat-flash { font-size:12px; color:var(--bad); margin:4px 0; }
 </style>
 </head>
 <body>
@@ -42,6 +52,7 @@
   <nav>
     <a href="/" {{if eq .Active "agents"}}class="active"{{end}}>Agent 列表</a>
     <a href="/agents/new" {{if eq .Active "wizard"}}class="active"{{end}}>注册 Agent</a>
+    <a href="/chat" {{if eq .Active "chat"}}class="active"{{end}}>私聊</a>
   </nav>
 </header>
 <main>{{ template "content" . }}</main>

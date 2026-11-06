@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/dddpeter/agent-nexus/internal/adapter"
 	"github.com/dddpeter/agent-nexus/internal/registry"
+	"github.com/dddpeter/agent-nexus/internal/repo"
 	"github.com/dddpeter/agent-nexus/web"
 )
 
@@ -23,6 +25,7 @@ import (
 var (
 	tplList   *template.Template // layout + agents
 	tplWizard *template.Template // layout + wizard
+	tplChat   *template.Template // layout + chat
 )
 
 var tplFuncs = template.FuncMap{
@@ -31,6 +34,30 @@ var tplFuncs = template.FuncMap{
 			return "-"
 		}
 		return t.Format("15:04:05")
+	},
+	"bubbleClass": func(senderType string) string {
+		switch senderType {
+		case "human":
+			return "human"
+		case "agent":
+			return "agent"
+		default:
+			return "system"
+		}
+	},
+	"bubbleLabel": func(senderType string) string {
+		switch senderType {
+		case "human":
+			return "你"
+		case "agent":
+			return "Agent"
+		default:
+			return "系统"
+		}
+	},
+	"formatTimePtr": func(t time.Time) string { return t.Format("15:04:05") },
+	"chatMessagesData": func(msgs []repo.Message, flash, sid string) chatMessagesVM {
+		return chatMessagesVM{Messages: msgs, Flash: flash, SessionID: sid}
 	},
 	"maskedConfig": func(cfg map[string]any) string {
 		if len(cfg) == 0 {
@@ -53,6 +80,8 @@ func init() {
 		ParseFS(web.Templates, "templates/layout.gohtml", "templates/agents.gohtml"))
 	tplWizard = template.Must(template.New("wizard").Funcs(tplFuncs).
 		ParseFS(web.Templates, "templates/layout.gohtml", "templates/wizard.gohtml"))
+	tplChat = template.Must(template.New("chat").Funcs(tplFuncs).
+		ParseFS(web.Templates, "templates/layout.gohtml", "templates/chat.gohtml"))
 }
 
 // pageVM 布局模板数据：Active 高亮导航，V 为内容模板数据。
@@ -76,14 +105,38 @@ func renderWizardPage(w http.ResponseWriter, status int, vm any) {
 func renderPartial(w http.ResponseWriter, status int, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	// config_form/test_result/submit_result 定义于 wizard 模板集
-	_ = tplWizard.ExecuteTemplate(w, name, data)
-	// agents_table 定义于 list 模板集
-	_ = tplList.ExecuteTemplate(w, name, data)
+	// config_form/test_result/submit_result 定义于 wizard 模板集；agents_table 定义于 list；
+	// chat_messages 定义于 chat——各模板集只会渲染自己定义的 name，缺失者返回空
+	for _, tpl := range []*template.Template{tplWizard, tplList, tplChat} {
+		if tpl.Lookup(name) == nil {
+			continue
+		}
+		if err := tpl.ExecuteTemplate(w, name, data); err != nil {
+			slog.Error("template render failed", "name", name, "err", err)
+		}
+		return
+	}
+	slog.Error("template not found", "name", name)
+}
+
+// chatMessagesVM 聊天消息局部数据。
+type chatMessagesVM struct {
+	Messages  []repo.Message
+	Flash     string
+	SessionID string
+}
+
+func renderChatPage(w http.ResponseWriter, status int, vm chatVM) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	if err := tplChat.ExecuteTemplate(w, "layout", pageVM{Active: "chat", V: vm}); err != nil {
+		slog.Error("chat page render failed", "err", err)
+	}
 }
 
 // mountWeb 挂载静态资源与 UI 页面。
 func (s *Server) mountWeb(r chi.Router) {
+	s.mountChat(r)
 	// 静态资源
 	sub, _ := fs.Sub(web.Assets, "assets")
 	r.Handle("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.FS(sub))))
