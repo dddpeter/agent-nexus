@@ -9,7 +9,7 @@ config/prod.yaml
 /bin/
 /dist/
 *.exe
-nexus
+/nexus
 
 # Go
 *.test
