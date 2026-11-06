@@ -1,0 +1,32 @@
+# 忽略配置与密钥
+*.local.yaml
+*.local.yml
+.env
+.env.*
+config/prod.yaml
+
+# 构建产物
+/bin/
+/dist/
+*.exe
+nexus
+
+# Go
+*.test
+*.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 运行时数据
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# OS
+.DS_Store
+Thumbs.db
