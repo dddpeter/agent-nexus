@@ -448,3 +448,8 @@ func (t *pgidTracker) flushLocked() error {
 	}
 	return os.Rename(tmp, t.path)
 }
+
+// LookPath 在 PATH 白名单环境内查找可执行文件（探活兜底用）。
+func LookPath(bin string) (string, error) {
+	return exec.LookPath(bin)
+}
