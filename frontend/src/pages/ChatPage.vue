@@ -185,21 +185,20 @@ async function sendSync(content: string): Promise<void> {
   }
 }
 
-/** McInput 回车/点击发送（autoClear 清空内部值，受控 value 需同步清空）。 */
+/** 发送入口：按 agent 能力自动路由——可流式优先流式（渐进渲染），否则退回同步。
+ *  发送模式是 agent 的属性，不作为用户的选择。 */
 function onSubmit(content: string): void {
-  if (!canSync.value) {
-    notifyError('该 agent 仅支持流式发送，请点「流式」按钮')
-    return
-  }
+  const text = content.trim()
+  if (!text || !session.value) return
   input.value = ''
-  void sendSync(content)
+  if (canStream.value) void sendStream(text)
+  else if (canSync.value) void sendSync(text)
+  else notifyError('该 agent 暂无可用发送方式')
 }
 
 /** 流式发送：乐观插入 human 气泡 + agent 气泡（首帧前 loading 态），delta 渐进追加。 */
-async function sendStreamMsg(): Promise<void> {
-  const content = input.value.trim()
+async function sendStream(content: string): Promise<void> {
   if (!content || !session.value || streaming.value) return
-  input.value = ''
   streaming.value = true
 
   const optimistic: Message = {
@@ -339,19 +338,7 @@ async function sendStreamMsg(): Promise<void> {
                 show-count
                 @change="(e: string) => (input = e)"
                 @submit="onSubmit"
-              >
-                <template #extra>
-                  <button
-                    v-if="canStream"
-                    class="btn btn-secondary btn-sm"
-                    type="button"
-                    :disabled="streaming"
-                    @click="sendStreamMsg"
-                  >
-                    {{ streaming ? '生成中…' : '流式' }}
-                  </button>
-                </template>
-              </McInput>
+              />
             </div>
           </div>
         </div>

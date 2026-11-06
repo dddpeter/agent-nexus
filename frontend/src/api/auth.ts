@@ -5,7 +5,7 @@ let cached: AuthStatus | null = null
 
 /** 路由守卫用（缓存一次，登录/登出后 force 刷新）。 */
 export async function authStatus(force = false): Promise<AuthStatus> {
-  if (!force || cached === null) {
+  if (force || cached === null) {
     cached = await get<AuthStatus>('/api/auth/status')
   }
   return cached
