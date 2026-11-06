@@ -23,9 +23,14 @@ coverage.html
 
 # 运行时数据
 /data/
+data/backups/
 *.db
 *.db-wal
 *.db-shm
+*.log
+
+# 运行时 pgid 记录（F7 收尸扫描用）
+*.pgids.json
 
 # OS
 .DS_Store
