@@ -609,6 +609,44 @@ func (r *Impl) UpdateConfig(ctx context.Context, agentID string, newCfg adapter.
 
 var mapOK = map[bool]string{true: "ok", false: "failed"}
 
+// UpdateCapabilities 能力覆盖更新（MaxConcurrency=0 拒绝；并发闸门容量随新值重建）。
+func (r *Impl) UpdateCapabilities(ctx context.Context, agentID string, caps adapter.Capabilities) (Agent, error) {
+	r.mu.RLock()
+	rt, ok := r.agents[agentID]
+	r.mu.RUnlock()
+	if !ok {
+		return Agent{}, fmt.Errorf("%w: agent %s", repo.ErrNotFound, agentID)
+	}
+	if caps.MaxConcurrency <= 0 {
+		return Agent{}, fmt.Errorf("%w: max_concurrency must be > 0", ErrBadCapabilities)
+	}
+	rt.mu.Lock()
+	inFlight := rt.inFlight
+	if inFlight > caps.MaxConcurrency {
+		rt.mu.Unlock()
+		return Agent{}, fmt.Errorf("%w: in-flight (%d) exceeds new max_concurrency (%d)", ErrBadCapabilities, inFlight, caps.MaxConcurrency)
+	}
+	base := rt.agent.Capabilities
+	merged := caps.MergeDefaults(base)
+	rt.agent.Capabilities = merged
+	rt.sem = semaphore.NewWeighted(int64(merged.MaxConcurrency)) // 重建闸门（当前占用 < 新容量）
+	updated := rt.agent
+	updated.Config = updated.Config.Clone()
+	updated.InFlight = inFlight
+	updated.Disabled = rt.disabled
+	rt.mu.Unlock()
+
+	rec, err := r.store.Agents().Get(ctx, agentID)
+	if err != nil {
+		return updated, err
+	}
+	rec.CapabilitiesJSON = mustJSON(adapter.CapabilitiesToJSON(merged))
+	if err := r.store.Agents().Update(ctx, rec); err != nil {
+		return updated, err
+	}
+	return updated, nil
+}
+
 // Disable 停用：心跳暂停、Acquire 拒绝（C-F1-05）。
 func (r *Impl) Disable(agentID string) error {
 	return r.setDisabled(agentID, true)

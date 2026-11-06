@@ -10,6 +10,22 @@ import (
 // 任务 7 仅占位；agents/adapters（任务 10）与 sessions/stream（任务 12-14）随各自任务落地。
 func (s *Server) mountAPI(r chi.Router) {
 	r.Get("/", s.handleAPIIndex)
+
+	// adapters（注册向导数据源）
+	r.Get("/adapters", s.handleListAdapters)
+
+	// agents
+	r.Post("/agents", s.handleRegisterAgent)
+	r.Get("/agents", s.handleListAgents)
+	r.Post("/agents/test", s.handleTestSpec) // 保存前按规格测试（向导用）
+	r.Route("/agents/{id}", func(r chi.Router) {
+		r.Get("/", s.handleGetAgent)
+		r.Put("/", s.handleUpdateAgent)
+		r.Post("/test", s.handleTestAgent)
+		r.Post("/disable", s.handleDisableAgent)
+		r.Post("/enable", s.handleEnableAgent)
+		r.Delete("/", s.handleDeleteAgent)
+	})
 }
 
 // mountWeb 挂载 Web 静态资源（任务 11 htmx 页面）。
