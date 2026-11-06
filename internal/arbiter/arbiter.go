@@ -45,26 +45,26 @@ type Message struct {
 
 // GroupState 群状态（每群一份，内存持有；快照异步落库，F3.3）。
 type GroupState struct {
-	GroupID string  `json:"group_id"`
+	GroupID string   `json:"group_id"`
 	Members []Member `json:"members"`
-	TopicID string  `json:"topic_id"`
-	Frozen  bool    `json:"frozen"`
+	TopicID string   `json:"topic_id"`
+	Frozen  bool     `json:"frozen"`
 
 	// 回合制状态
-	TurnOccupied   bool   `json:"turn_occupied"`    // 本回合已有 agent 接话
+	TurnOccupied   bool   `json:"turn_occupied"`   // 本回合已有 agent 接话
 	CurrentSpeaker string `json:"current_speaker"` // 本回合占用者
 
 	// 预算与话题（按话题重置）
 	TurnsUsed map[string]int `json:"turns_used"` // agent → 本话题已发言次数
 
 	// 防死循环
-	LastSpeakerID   string `json:"last_speaker_id"`
-	LastSpeakerType string `json:"last_speaker_type"`
-	HumanSilentRounds int  `json:"human_silent_rounds"` // 人连续未插话轮数
+	LastSpeakerID     string `json:"last_speaker_id"`
+	LastSpeakerType   string `json:"last_speaker_type"`
+	HumanSilentRounds int    `json:"human_silent_rounds"` // 人连续未插话轮数
 
 	// 阈值（全部热可调）
-	MaxTurnsPerTopic     int `json:"max_turns_per_topic"`      // 默认 2
-	HumanSilentThreshold int `json:"human_silent_threshold"`   // 默认 4
+	MaxTurnsPerTopic     int `json:"max_turns_per_topic"`    // 默认 2
+	HumanSilentThreshold int `json:"human_silent_threshold"` // 默认 4
 }
 
 // DefaultMaxTurnsPerTopic / DefaultHumanSilentThreshold 保守默认值（F3.5 宁严勿松）。
@@ -108,7 +108,7 @@ func (g GroupState) member(id string) (Member, bool) {
 type IncomingKind string
 
 const (
-	IncomingHuman         IncomingKind = "human"          // 人发言（路由决策）
+	IncomingHuman          IncomingKind = "human"           // 人发言（路由决策）
 	IncomingAgentCandidate IncomingKind = "agent_candidate" // agent 候选（准入决策）
 )
 
@@ -178,7 +178,7 @@ func Evaluate(_ context.Context, in Input) Decision {
 	// 0) 静默检查：人连续 silent ≥ N 轮 → 强制冻结 + 摘要 + @主持人（U-F3-06）
 	if !gs.Frozen && gs.HumanSilentThreshold > 0 && gs.HumanSilentRounds >= gs.HumanSilentThreshold {
 		return Decision{
-			Allow: false,
+			Allow:    false,
 			Deferred: deferOne(in, "frozen_by_silence"),
 			Actions: []Action{
 				{Kind: ActionFreeze, Reason: "human silent rounds reached threshold"},
