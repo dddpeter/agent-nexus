@@ -67,7 +67,7 @@ func TestChatPageFlow(t *testing.T) {
 	code, body = getUI(t, ts.URL, loc2)
 	require.Equal(t, http.StatusOK, code)
 	assert.Contains(t, body, "chat-stream-btn", "CanStream agent 应有流式发送按钮")
-	assert.Contains(t, body, "EventSource('/api/stream')", "应订阅全局 SSE 实时刷新")
+	assert.Contains(t, body, "sse:msg.agent", "应订阅全局 SSE 实时刷新（sse 扩展触发）")
 
 	// 4) 表单发送（同步）→ 消息局部回显双气泡
 	code, body = postFormUI(t, ts.URL, "/ui/chat/send", url.Values{

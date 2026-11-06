@@ -5,18 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nexus · {{.Title}}</title>
 <link rel="stylesheet" href="/assets/system.css">
-<script src="/assets/htmx.min.js" defer></script>
+<script src="/assets/htmx.min.js"></script>
+<script src="/assets/htmx-ext-sse.js"></script>
 </head>
-<body>
+<body hx-ext="sse" sse-connect="/api/stream">
 <header class="topbar">
   <div class="topbar-in">
-    <a class="brand" href="/"><span class="brand-mark">N</span>Nexus</a>
+    <a class="brand" href="/"><span class="brand-mark"></span>Nexus</a>
     <nav class="nav">
       <a href="/" {{if eq .Active "agents"}}class="on"{{end}}>Agent</a>
       <a href="/agents/new" {{if eq .Active "wizard"}}class="on"{{end}}>注册</a>
       <a href="/chat" {{if eq .Active "chat"}}class="on"{{end}}>私聊</a>
     </nav>
-    <div class="top-meta" id="top-meta" hx-get="/ui/topmeta" hx-trigger="every 15s" hx-swap="innerHTML">
+    <div class="top-meta" hx-get="/ui/topmeta" hx-trigger="every 30s" hx-swap="innerHTML">
       {{if .Meta}}{{template "topmeta" .Meta}}{{end}}
     </div>
   </div>
@@ -28,7 +29,6 @@
   </div>
 </footer>
 <script>
-// 相对时间渲染：data-ts="RFC3339"
 function relTimeAll(root){
   (root||document).querySelectorAll('[data-ts]').forEach(function(el){
     var t=new Date(el.dataset.ts); if(isNaN(t))return;
@@ -42,7 +42,6 @@ function relTimeAll(root){
 }
 document.addEventListener('DOMContentLoaded',function(){relTimeAll();});
 document.body.addEventListener('htmx:afterSwap',function(e){relTimeAll(e.target);});
-// 聊天消息区自动滚到底（首屏 + 局部刷新后）
 function chatScrollBottom(){
   var el=document.getElementById('chat-messages');
   if(el) el.scrollTop=el.scrollHeight;
@@ -55,4 +54,4 @@ document.body.addEventListener('htmx:afterSwap',function(e){
 </body>
 </html>{{end}}
 
-{{define "topmeta"}}<span>{{.Total}} agent · {{.Online}} 在线</span>{{end}}
+{{define "topmeta"}}<span id="topmeta-oob">{{.Total}} agent · {{.Online}} 在线</span>{{end}}

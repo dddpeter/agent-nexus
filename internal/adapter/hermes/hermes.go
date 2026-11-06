@@ -52,7 +52,8 @@ func (f *Factory) New(cfg adapter.Config) (adapter.AgentAdapter, error) {
 		baseURL:  strings.TrimRight(adapter.GetStr(normalized, "base_url", ""), "/"),
 		apiKey:   adapter.GetStr(normalized, "api_key", ""),
 		timeout:  adapter.GetDuration(normalized, "timeout", 2*time.Minute),
-		client:   &http.Client{},
+		// 直连：不继承系统代理（纳管对象通常是本机/内网服务，走代理会导致探活结果失真）
+		client:   &http.Client{Transport: &http.Transport{Proxy: nil}},
 		sessions: make(map[adapter.SessionID]string),
 	}, nil
 }

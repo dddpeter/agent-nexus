@@ -123,6 +123,7 @@ type listVM struct {
 	Agents  []agentDTO
 	Flash   string
 	FlashOK bool
+	Query   string  // 搜索关键字（空态提示用）
 	Stats   statsVM // 首屏统计条（局部刷新走 /ui/agents/stats）
 }
 
@@ -316,7 +317,7 @@ func (s *Server) pageAgentList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// partialAgentsTable GET /agents/table —— 列表局部。
+// partialAgentsTable GET /agents/table?q= —— 列表局部（支持实时搜索过滤）。
 func (s *Server) partialAgentsTable(w http.ResponseWriter, r *http.Request) {
 	s.renderTable(w, r, "", false)
 }
@@ -327,11 +328,43 @@ func (s *Server) renderTable(w http.ResponseWriter, r *http.Request, flash strin
 		writeError(w, r, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	dtos := make([]agentDTO, 0, len(agents))
 	for _, a := range agents {
-		dtos = append(dtos, s.toDTO(a))
+		dto := s.toDTO(a)
+		if q != "" && !dtoMatches(dto, q) {
+			continue
+		}
+		dtos = append(dtos, dto)
 	}
-	renderPartial(w, http.StatusOK, "agents_table", listVM{Agents: dtos, Flash: flash, FlashOK: ok})
+	vm := listVM{Agents: dtos, Flash: flash, FlashOK: ok, Query: r.URL.Query().Get("q")}
+
+	// 行操作（flash 非空）附带 OOB：一次响应同步刷新统计条与顶栏计数
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	exec := func(tpl *template.Template, name string, data any) {
+		if err := tpl.ExecuteTemplate(w, name, data); err != nil {
+			slog.Error("template render failed", "name", name, "err", err)
+		}
+	}
+	exec(tplList, "agents_table", vm)
+	if flash != "" {
+		// OOB：与页面元素同 id 且显式声明 hx-swap-oob（普通局部端点不带此属性，
+		// 否则 htmx 会将纯 OOB 响应从 innerHTML 目标中抽走、清空容器）
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, `<div id="stats-oob" class="telemetry" hx-swap-oob="true">`)
+		exec(tplList, "agents_stats_cells", s.computeStats(r.Context()))
+		_, _ = fmt.Fprint(w, `</div>`)
+		tm := s.computeTopMeta(r.Context())
+		_, _ = fmt.Fprintf(w, `<span id="topmeta-oob" hx-swap-oob="true">%d agent · %d 在线</span>`, tm.Total, tm.Online)
+	}
+}
+
+// dtoMatches 搜索过滤：名称 / adapter / 状态 包含即命中。
+func dtoMatches(a agentDTO, q string) bool {
+	return strings.Contains(strings.ToLower(a.Name), q) ||
+		strings.Contains(strings.ToLower(a.Adapter), q) ||
+		strings.Contains(strings.ToLower(a.Status), q)
 }
 
 // partialTopMeta GET /ui/topmeta。

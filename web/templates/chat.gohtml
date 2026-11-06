@@ -72,7 +72,7 @@
   <div class="chat-box">
     <div class="chat-history" id="chat-messages"
          hx-get="/ui/chat/messages?session={{.Session.ID}}"
-         hx-trigger="every 4s, refresh from:body" hx-swap="innerHTML">
+         hx-trigger="every 4s, refresh from:body, sse:msg.human, sse:msg.agent, sse:msg.system" hx-swap="innerHTML">
       {{template "chat_messages" (chatMessagesData .Messages "" .Session.ID)}}
     </div>
     <form id="chat-form" class="chat-input-bar"
@@ -88,18 +88,6 @@
 </div>
 
 <script>
-(function(){
-  var root=document.getElementById('chat-root');
-  var sid=root.dataset.session;
-  if(!sid||!window.EventSource)return;
-  var es=new EventSource('/api/stream');
-  ['msg.human','msg.agent','msg.system'].forEach(function(t){
-    es.addEventListener(t,function(e){
-      try{var d=JSON.parse(e.data);if(d.session_id===sid)htmx.trigger(document.body,'refresh');}catch(_){}
-    });
-  });
-})();
-
 function chatSendStream(){
   var root=document.getElementById('chat-root');
   var inp=document.getElementById('chat-input');

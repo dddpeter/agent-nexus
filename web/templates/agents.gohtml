@@ -7,35 +7,33 @@
   <a class="btn btn-primary" href="/agents/new">注册 Agent</a>
 </div>
 
-<div id="agents-stats" hx-get="/ui/agents/stats" hx-trigger="agentsChanged from:body" hx-swap="innerHTML">
+<div id="agents-stats" hx-get="/ui/agents/stats" hx-trigger="sse:agent.status" hx-swap="innerHTML">
   {{template "agents_stats" .Stats}}
 </div>
 
 <div class="card" style="padding:6px 20px 10px">
+  <div class="tbl-tools">
+    <input class="f-input" type="search" name="q" placeholder="按名称、adapter 或状态过滤"
+           hx-get="/agents/table" hx-trigger="input changed delay:300ms, search"
+           hx-target="#agents-table" hx-include="this">
+    <span class="small muted" id="tbl-count"></span>
+  </div>
   <div id="agents-table"
-       hx-get="/agents/table" hx-trigger="every 15s, agentsChanged from:body" hx-swap="innerHTML">
+       hx-get="/agents/table" hx-trigger="every 15s, sse:agent.status" hx-swap="innerHTML">
     {{template "agents_table" .}}
   </div>
 </div>
-
-<script>
-(function(){
-  if(!window.EventSource) return;
-  var es=new EventSource('/api/stream');
-  es.addEventListener('agent.status', function(){
-    htmx.trigger(document.body,'agentsChanged');
-  });
-})();
-</script>
 {{end}}
 
 {{define "agents_stats"}}
-<div class="stats">
-  <div class="stat"><div class="n">{{.Total}}</div><div class="l">已注册</div></div>
-  <div class="stat"><div class="n" style="color:var(--ok)">{{.Online}}</div><div class="l">在线</div></div>
-  <div class="stat"><div class="n" style="color:var(--bad)">{{.Offline}}</div><div class="l">离线</div></div>
-  <div class="stat"><div class="n" style="color:var(--muted-st)">{{.Removed}}</div><div class="l">停用 / 已删</div></div>
-</div>
+<div id="stats-oob" class="telemetry">{{template "agents_stats_cells" .}}</div>
+{{end}}
+
+{{define "agents_stats_cells"}}
+  <div class="t"><div class="n">{{.Total}}</div><div class="l">已注册</div></div>
+  <div class="t"><div class="n" style="color:var(--ok)">{{.Online}}</div><div class="l">在线</div></div>
+  <div class="t bad"><div class="n">{{.Offline}}</div><div class="l">离线</div></div>
+  <div class="t dim"><div class="n">{{.Removed}}</div><div class="l">停用 / 已删</div></div>
 {{end}}
 
 {{define "agents_table"}}
@@ -49,7 +47,7 @@
   {{range .Agents}}
     <tr class="agent-row">
       <td><span class="st st-{{.Status}}">{{.Status}}</span>{{if .Disabled}} <span class="st st-disabled">停用</span>{{end}}</td>
-      <td><a href="/agents/{{.ID}}/view" style="font-weight:600;color:var(--ink)">{{.Name}}</a>
+      <td><a href="/agents/{{.ID}}/view" style="font-weight:600">{{.Name}}</a>
           <div class="mono muted">{{.ID}}</div></td>
       <td><span class="chip">{{.Adapter}}</span></td>
       <td class="small">
@@ -61,26 +59,31 @@
       <td class="small muted" data-ts="{{formatTimeISO .LastHeartbeatAt}}">{{formatTimeISO .LastHeartbeatAt}}</td>
       <td>
         <div class="row-actions">
-          <form hx-post="/ui/agents/{{.ID}}/test" hx-target="#agents-table" hx-swap="innerHTML">
-            <button class="btn btn-quiet btn-sm" type="submit">测试</button>
+          <form hx-post="/ui/agents/{{.ID}}/test" hx-target="#agents-table" hx-swap="innerHTML" hx-disabled-elt="find button">
+            <button class="btn btn-quiet btn-sm" type="submit">测试<span class="htmx-indicator spin"></span></button>
           </form>
           <a class="btn btn-quiet btn-sm" href="/agents/{{.ID}}/view">配置</a>
           {{if .Disabled}}
-          <form hx-post="/ui/agents/{{.ID}}/enable" hx-target="#agents-table" hx-swap="innerHTML">
+          <form hx-post="/ui/agents/{{.ID}}/enable" hx-target="#agents-table" hx-swap="innerHTML" hx-disabled-elt="find button">
             <button class="btn btn-quiet btn-sm" type="submit">启用</button>
           </form>
           {{else}}
-          <form hx-post="/ui/agents/{{.ID}}/disable" hx-target="#agents-table" hx-swap="innerHTML">
+          <form hx-post="/ui/agents/{{.ID}}/disable" hx-target="#agents-table" hx-swap="innerHTML" hx-disabled-elt="find button">
             <button class="btn btn-quiet btn-sm" type="submit">停用</button>
           </form>
           {{end}}
-          <form hx-post="/ui/agents/{{.ID}}/delete" hx-confirm="软删除 {{.Name}}？历史会话与消息保留。" hx-target="#agents-table" hx-swap="innerHTML">
+          <form hx-post="/ui/agents/{{.ID}}/delete" hx-confirm="软删除 {{.Name}}？历史会话与消息保留。" hx-target="#agents-table" hx-swap="innerHTML" hx-disabled-elt="find button">
             <button class="btn btn-danger btn-sm" type="submit">软删</button>
           </form>
         </div>
       </td>
     </tr>
   {{else}}
+    {{if .Query}}
+    <tr><td colspan="7">
+      <div class="empty"><div class="big">没有匹配「{{.Query}}」的 agent</div><div>换个关键词，或清空过滤条件</div></div>
+    </td></tr>
+    {{else}}
     <tr><td colspan="7">
       <div class="empty">
         <div class="big">还没有注册任何 agent</div>
@@ -88,6 +91,7 @@
         <a class="btn btn-primary" href="/agents/new">注册 Agent</a>
       </div>
     </td></tr>
+    {{end}}
   {{end}}
   </tbody>
 </table>

@@ -57,6 +57,11 @@ func TestUIPagesSmoke(t *testing.T) {
 	assert.Contains(t, body, "已注册", "首屏统计条应渲染")
 	assert.Contains(t, body, "还没有注册任何 agent", "首屏表格空态应渲染")
 
+	// v2：SSE 扩展接管实时刷新 + 实时搜索框
+	assert.Contains(t, body, `hx-ext="sse" sse-connect="/api/stream"`, "布局级 SSE 连接")
+	assert.Contains(t, body, `hx-trigger="every 15s, sse:agent.status"`, "表格 SSE 触发")
+	assert.Contains(t, body, `hx-trigger="input changed delay:300ms, search"`, "搜索去抖")
+
 	// 向导页：adapter 下拉 + 首个 schema 内联表单
 	code, body = getUI(t, ts.URL, "/agents/new")
 	require.Equal(t, http.StatusOK, code)
@@ -121,4 +126,33 @@ func TestUIPagesSmoke(t *testing.T) {
 	code, body = getUI(t, ts.URL, "/assets/htmx.min.js")
 	require.Equal(t, http.StatusOK, code)
 	assert.Contains(t, body, "htmx")
+}
+
+// v2：实时搜索过滤 + 行操作 OOB 同步刷新统计/顶栏。
+func TestTableSearchAndOOB(t *testing.T) {
+	ts, _, _ := newSessionTestServer(t)
+	_, a1 := doReq(t, http.MethodPost, ts.URL+"/api/agents", map[string]any{
+		"name": "echod-alpha", "adapter": "echod", "config": map[string]any{"mode": "echo"},
+	}, authed())
+	_, _ = doReq(t, http.MethodPost, ts.URL+"/api/agents", map[string]any{
+		"name": "echod-beta", "adapter": "echod", "config": map[string]any{"mode": "fixed", "reply": "ok"},
+	}, authed())
+
+	// 搜索命中 beta
+	code, body := getUI(t, ts.URL, "/agents/table?q=beta")
+	require.Equal(t, http.StatusOK, code)
+	assert.Contains(t, body, "echod-beta")
+	assert.NotContains(t, body, "echod-alpha")
+
+	// 搜索无命中 → 专属空态
+	code, body = getUI(t, ts.URL, "/agents/table?q=ghost")
+	require.Equal(t, http.StatusOK, code)
+	assert.Contains(t, body, "没有匹配「ghost」")
+
+	// 行操作响应附带 OOB（统计 + 顶栏）
+	resp, body := postFormUIHeaders(t, ts.URL, "/ui/agents/"+a1["id"].(string)+"/disable", url.Values{})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, body, `id="stats-oob"`, "OOB 统计")
+	assert.Contains(t, body, `id="topmeta-oob"`, "OOB 顶栏")
+	assert.Contains(t, body, `hx-swap-oob="true"`)
 }
