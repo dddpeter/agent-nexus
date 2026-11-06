@@ -26,6 +26,7 @@ fe-dev:
 
 fe-build: fe-install
 	$(FE_PM) --prefix $(FE_DIR) run build
+	@touch web/dist/.gitkeep  # emptyOutDir 会清掉占位文件，补回以保 fresh clone 的 go:embed 可编译
 
 fe-test:
 	$(FE_PM) --prefix $(FE_DIR) run test

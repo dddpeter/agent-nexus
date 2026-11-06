@@ -47,11 +47,11 @@ func (f *Factory) New(cfg adapter.Config) (adapter.AgentAdapter, error) {
 		return nil, err
 	}
 	return &Adapter{
-		agentID:  id.New(),
-		profile:  adapter.GetStr(normalized, "profile", "default"),
-		baseURL:  strings.TrimRight(adapter.GetStr(normalized, "base_url", ""), "/"),
-		apiKey:   adapter.GetStr(normalized, "api_key", ""),
-		timeout:  adapter.GetDuration(normalized, "timeout", 2*time.Minute),
+		agentID: id.New(),
+		profile: adapter.GetStr(normalized, "profile", "default"),
+		baseURL: strings.TrimRight(adapter.GetStr(normalized, "base_url", ""), "/"),
+		apiKey:  adapter.GetStr(normalized, "api_key", ""),
+		timeout: adapter.GetDuration(normalized, "timeout", 2*time.Minute),
 		// 直连：不继承系统代理（纳管对象通常是本机/内网服务，走代理会导致探活结果失真）
 		client:   &http.Client{Transport: &http.Transport{Proxy: nil}},
 		sessions: make(map[adapter.SessionID]string),
