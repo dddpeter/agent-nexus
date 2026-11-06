@@ -14,6 +14,9 @@ func (s *Server) mountAPI(r chi.Router) {
 	// adapters（注册向导数据源）
 	r.Get("/adapters", s.handleListAdapters)
 
+	// SSE 全局流（断线 Last-Event-ID 补偿重放）
+	r.Get("/stream", s.handleGlobalStream)
+
 	// agents
 	r.Post("/agents", s.handleRegisterAgent)
 	r.Get("/agents", s.handleListAgents)
