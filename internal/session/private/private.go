@@ -320,8 +320,8 @@ func (r *Router) buildContextDigest(ctx context.Context, sessionID string) strin
 		return ""
 	}
 	var sb strings.Builder
-	if len(rounds) > r.opts.SummaryTriggerRounds {
-		// 摘要触发（U-F2-07）：摘要标记 + 压缩
+	if len(rounds) >= r.opts.SummaryTriggerRounds {
+		// 摘要触发（U-F2-07）：历史达到阈值（默认 20 轮）即压缩为标记摘要 + 最近 K 轮
 		sb.WriteString(r.opts.Summarizer(rounds[:len(rounds)-r.opts.ContextRounds]))
 		sb.WriteString("\n")
 		rounds = rounds[len(rounds)-r.opts.ContextRounds:]
