@@ -9,13 +9,10 @@ FE_PM ?= npm   # 可换 bun：make build FE_PM=bun
 
 all: build
 
-# 单二进制：前端产物先构建（web/dist），再 go build（go:embed all:dist）
-build: fe-build $(BINARY_NEXUS) $(BINARY_ECHOD)
-
-$(BINARY_NEXUS):
+# 单二进制：前端产物先构建（web/dist），再 go build（go:embed all:dist）。
+# Go/embed 源变更无法用文件时间戳表达，始终重编（秒级开销）。
+build: fe-build
 	go build -o $(BINARY_NEXUS) ./cmd/nexus
-
-$(BINARY_ECHOD):
 	go build -o $(BINARY_ECHOD) ./cmd/echod
 
 # ---------- 前端（Vue 3 + Vite，frontend/）----------
