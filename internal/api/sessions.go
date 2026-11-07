@@ -85,12 +85,20 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/sessions/{id}/messages 历史消息（存档检索）。
+// ?limit=N 取最近 N 条（升序返回，默认 200 上限 1000）——长会话避免全量载荷。
 func (s *Server) handleSessionMessages(w http.ResponseWriter, r *http.Request) {
-	msgs, err := s.deps.Store.Messages().ListBySession(r.Context(), chi.URLParam(r, "id"))
+	limit := 200
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1000 {
+			limit = n
+		}
+	}
+	msgs, err := s.deps.Store.Messages().RecentBySession(r.Context(), chi.URLParam(r, "id"), limit)
 	if err != nil {
 		mapWriteError(w, r, err)
 		return
 	}
+	// RecentBySession 契约即「最近 N 条、时间升序」（repo 内部已翻转），直接顺序输出
 	out := make([]messageDTO, 0, len(msgs))
 	for _, m := range msgs {
 		out = append(out, toMessageDTO(m))

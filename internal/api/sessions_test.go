@@ -282,3 +282,31 @@ func TestSessionModeNotSupported(t *testing.T) {
 	require.NoError(t, json.NewDecoder(respRaw.Body).Decode(&env))
 	assert.Equal(t, "mode_not_supported", env["error"].(map[string]any)["code"])
 }
+
+// GET messages 顺序回归：RecentBySession 契约为升序输出（最近 limit 条），
+// 回归点——handler 不得再翻转（曾导致聊天历史整段倒序）。
+func TestSessionMessagesOrdering(t *testing.T) {
+	ts, _, _ := newSessionTestServer(t)
+
+	_, agent := doReq(t, http.MethodPost, ts.URL+"/api/agents", map[string]any{
+		"name": "ord-echo", "adapter": "echod", "config": map[string]any{"mode": "echo"},
+	}, authed())
+	_, sess := doReq(t, http.MethodPost, ts.URL+"/api/sessions",
+		map[string]any{"agent_id": agent["id"].(string)}, authed())
+	sessID := sess["id"].(string)
+
+	for _, text := range []string{"第一轮", "第二轮"} {
+		resp, body := doReq(t, "POST", ts.URL+"/api/sessions/"+sessID+"/messages",
+			map[string]any{"content": text, "mode": "sync"}, authed())
+		require.Equal(t, http.StatusOK, resp.StatusCode, "sync 发送应成功: %v", body)
+	}
+
+	resp, msgs := doReqList(t, ts.URL+"/api/sessions/"+sessID+"/messages", authed())
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.GreaterOrEqual(t, len(msgs), 4, "两轮 sync 应有 human+agent ≥4 条")
+	for i := 1; i < len(msgs); i++ {
+		prev := msgs[i-1]["created_at"].(string)
+		cur := msgs[i]["created_at"].(string)
+		require.LessOrEqual(t, prev, cur, "消息必须按时间升序返回（聊天气泡顺序依赖此契约）")
+	}
+}
