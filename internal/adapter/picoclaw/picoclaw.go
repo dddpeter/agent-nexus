@@ -32,8 +32,8 @@ func (f *Factory) ConfigSchema() adapter.Schema {
 		{Name: "probe_command", Label: "探活命令", Type: adapter.FieldList,
 			Help: "如 [\"picoclaw\",\"--version\"]；留空则仅校验可执行文件存在"},
 		{Name: "output", Label: "输出解析", Type: adapter.FieldString, Default: "json",
-			Options: []string{"json", "text"},
-			Help:    "json=解析最后一行 {\"reply\",\"session\"}；text=全文即回复"},
+			Options: []string{"json", "text", "lastline"},
+			Help:    "json=解析最后一行 {\"reply\",\"session\"}；text=全文即回复；lastline=取最后一行非空文本（真实 CLI 的 banner/日志噪音下取回复行）"},
 		{Name: "timeout", Label: "调用超时", Type: adapter.FieldDuration, Default: "5m0s"},
 		{Name: "cwd", Label: "工作目录", Type: adapter.FieldString},
 		{Name: "env", Label: "附加环境变量", Type: adapter.FieldList, Help: "KEY=VAL 列表"},
@@ -139,6 +139,14 @@ type cliOut struct {
 // Send 渲染模板 → execx 管控子进程 → 解析输出（失败重试一次）。
 func (a *Adapter) Send(ctx context.Context, sid adapter.SessionID, msg adapter.Message) (adapter.Reply, error) {
 	ext := a.externalOf(sid)
+	if ext == "" && a.sessionCapable() {
+		// 懒绑定：Router 首次发送传平台 sid（不经 CreateSession），将其作为 agent 侧
+		// 续话标识（与 CreateSession 的初始映射一致）；跨会话隔离，重启 map 丢失后可恢复。
+		ext = string(sid)
+		a.mu.Lock()
+		a.sessions[sid] = ext
+		a.mu.Unlock()
+	}
 
 	var reply adapter.Reply
 	var lastErr error
@@ -187,6 +195,20 @@ func (a *Adapter) parseOutput(stdout, ext string) (adapter.Reply, error) {
 	out := strings.TrimSpace(stdout)
 	if a.output == "text" {
 		return adapter.Reply{Content: out, SessionRef: ext, Done: true}, nil
+	}
+	if a.output == "lastline" {
+		// 真实 CLI 常在 stdout 打 banner/进度日志（如 picoclaw 鲎 banner + zerolog WRN），
+		// 回复约定为最后一行非空文本；无输出视为失败。
+		last := ""
+		for _, line := range strings.Split(out, "\n") {
+			if t := strings.TrimSpace(line); t != "" {
+				last = t
+			}
+		}
+		if last == "" {
+			return adapter.Reply{}, fmt.Errorf("empty stdout")
+		}
+		return adapter.Reply{Content: last, SessionRef: ext, Done: true}, nil
 	}
 	// json：取最后一个非空行
 	lines := strings.Split(out, "\n")
