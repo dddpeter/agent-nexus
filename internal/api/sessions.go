@@ -235,6 +235,9 @@ func (s *Server) handleRecentSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]sessionDTO, 0, len(sessions))
 	for _, sess := range sessions {
+		if sess.Kind != repo.KindPrivate {
+			continue // 私聊侧栏只列私聊会话（群会话无 agent 名，混入显示为空行——截图走查发现）
+		}
 		out = append(out, toSessionDTO(sess))
 	}
 	writeJSON(w, http.StatusOK, out)
