@@ -31,13 +31,19 @@
 
 ## 未完成项（按任务范围裁剪，非本夜 DoD）
 
-9. **U-F6-05/06**：群状态快照恢复（依赖 M3 群协调器壳）与 `VACUUM INTO` 定时备份（F6.2 备份策略）未实现。
+9. **U-F6-05/06** ✅ 已实现（2026-11-07）：
+   - U-F6-05 群状态快照：迁移 00003 `groups.state_json`，协调器 30s 异步落库 + `LoadPersisted`
+     重启恢复（成员/阈值以库行配置为准，运行态计数取快照）。回归 `TestSnapshotRestore`。
+   - U-F6-06 备份：`repo.VacuumBackup`（VACUUM INTO → `data/backups/`，纳秒命名，保留 7 份），
+     启动即出快照 + `server.backup_interval`（默认 24h，<=0 禁用）。回归 `TestVacuumBackupRestore`
+     （备份文件独立 OpenSQLite 数据一致）。
 10. **U-F5-05 CLI REPL**（`nexus chat`）：任务 7 范围限定 serve/list/register；REPL 属 FR5.4 完整形态。
 11. **FR2.5 会话闲置 24h 自动回收** ✅ 已实现（2026-11-07）：`internal/session.Janitor` 周期扫描
     （`server.session_sweep_interval` 默认 30min），闲置阈值 `server.session_idle_timeout` 默认 24h
     （显式负值禁用）；闲置 = 末条消息早于阈值（无消息回退 created_at）；归档时追加系统消息说明原因。
     回归：`TestJanitorSweep` + `TestSessionCloseIdle`（memory/sqlite 双实现）。
-12. **仲裁器状态快照 30s 异步落库**（F3.3）：`ApplyDecision` 纯转移已就绪，群状态壳（M3）负责落库。
+12. **仲裁器状态快照 30s 异步落库**（F3.3）✅ 已实现（2026-11-07）：随 M3 群协调器落地
+    （`Coordinator.Run` 快照循环 + SaveState），见 #9。
 13. **serve 静态 agents 的 upsert 语义**：同名 agent 走 `UpdateConfig(force=false)`，新配置探活失败时跳过更新并记日志（保留旧配置运行）。
 
 ## 工程备注
