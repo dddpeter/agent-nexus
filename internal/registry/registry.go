@@ -366,6 +366,15 @@ func (r *Impl) AgentName(ctx context.Context, agentID string) (string, error) {
 	return a.Name, nil
 }
 
+// AgentStatus 状态读数（cron 触发前置检查 / offline 跳过语义）。
+func (r *Impl) AgentStatus(ctx context.Context, agentID string) (string, error) {
+	a, err := r.Get(ctx, agentID)
+	if err != nil {
+		return "", err
+	}
+	return a.Status, nil
+}
+
 func (r *Impl) Get(ctx context.Context, agentID string) (Agent, error) {
 	r.mu.RLock()
 	rt, ok := r.agents[agentID]

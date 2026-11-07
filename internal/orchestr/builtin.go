@@ -41,18 +41,21 @@ type Scheduler interface {
 type Builtin struct {
 	store repo.Store
 	bus   bus.Bus
+	reg   ChainRegistry // M4：chain 节点的 agent 调用（可为 nil，此时仅支持 Job）
 	log   *slog.Logger
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
+	nodeMu  sync.Mutex // nodes_json 读改写串行化（parallel 并发节点写竞争）
 }
 
 // NewBuiltin 创建内置调度器并清理上次遗留任务（降级语义：running → failed）。
-func NewBuiltin(store repo.Store, b bus.Bus, log *slog.Logger) *Builtin {
+// reg 为 chain 执行器的 agent 调用依赖（M4；传 nil 时 SubmitChain 不可用）。
+func NewBuiltin(store repo.Store, b bus.Bus, reg ChainRegistry, log *slog.Logger) *Builtin {
 	if log == nil {
 		log = slog.Default()
 	}
-	ob := &Builtin{store: store, bus: b, log: log, cancels: make(map[string]context.CancelFunc)}
+	ob := &Builtin{store: store, bus: b, reg: reg, log: log, cancels: make(map[string]context.CancelFunc)}
 	ob.failStaleRunning()
 	return ob
 }
@@ -161,6 +164,10 @@ func (o *Builtin) Cancel(ctx context.Context, workflowID string) error {
 	task, err := o.store.Tasks().Get(ctx, workflowID)
 	if err != nil {
 		return err
+	}
+	switch task.Status { // 终态不可取消（防 Cancel 竞态改写 done/failed）
+	case repo.TaskDone, repo.TaskFailed, repo.TaskCancelled:
+		return fmt.Errorf("orchestr: task %s already %s", workflowID, task.Status)
 	}
 	now := time.Now()
 	task.Status = repo.TaskCancelled
