@@ -142,3 +142,54 @@ export interface GroupSendResult {
   deferred?: Array<{ agent_id: string; content: string; reason: string }>
   frozen: boolean
 }
+
+// ---------- 任务编排（M4） ----------
+
+export interface ChainNode {
+  agent_id: string
+  input: string
+  timeout_seconds?: number
+  retries?: number
+  parallel?: ChainNode[]
+}
+
+export interface TaskNodeState {
+  id: string
+  agent_id: string
+  status: 'queued' | 'running' | 'done' | 'failed' | string
+  output?: string
+  error?: string
+  retried?: number
+  started_at?: string
+  finished_at?: string
+  input?: string
+}
+
+export interface Task {
+  id: string
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled' | string
+  input?: string
+  result?: string
+  error?: string
+  nodes?: TaskNodeState[]
+  created_at?: string
+  finished_at?: string
+}
+
+export interface CronTarget {
+  type: 'agent' | 'chain' | string
+  agent_id?: string
+  input?: string
+  chain?: { nodes: ChainNode[]; input?: string }
+}
+
+export interface CronJob {
+  id: string
+  name: string
+  cron_expr: string
+  target: CronTarget
+  enabled: boolean
+  last_run_at?: string
+  last_status?: string
+  last_task_id?: string
+}

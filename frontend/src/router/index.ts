@@ -7,6 +7,7 @@ import AgentDetailPage from '../pages/AgentDetailPage.vue'
 import ChatPage from '../pages/ChatPage.vue'
 import EventsPage from '../pages/EventsPage.vue'
 import GroupsPage from '../pages/GroupsPage.vue'
+import TasksPage from '../pages/TasksPage.vue'
 import LoginPage from '../pages/LoginPage.vue'
 
 const router = createRouter({
@@ -18,6 +19,7 @@ const router = createRouter({
     { path: '/chat', name: 'chat', component: ChatPage },
     { path: '/events', name: 'events', component: EventsPage },
     { path: '/groups', name: 'groups', component: GroupsPage },
+    { path: '/tasks', name: 'tasks', component: TasksPage },
     { path: '/login', name: 'login', component: LoginPage, meta: { bare: true } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

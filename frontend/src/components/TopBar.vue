@@ -36,6 +36,7 @@ async function logout(): Promise<void> {
         <router-link to="/agents/new" :class="{ on: $route.name === 'wizard' }">注册</router-link>
         <router-link to="/chat" :class="{ on: $route.name === 'chat' }">私聊</router-link>
         <router-link to="/groups" :class="{ on: $route.name === 'groups' }">群聊</router-link>
+        <router-link to="/tasks" :class="{ on: $route.name === 'tasks' }">任务</router-link>
         <router-link to="/events" :class="{ on: $route.name === 'events' }">事件</router-link>
       </nav>
       <div class="top-meta">
