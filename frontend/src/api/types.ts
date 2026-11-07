@@ -102,3 +102,43 @@ export interface StreamFrame {
   type: 'delta' | 'final' | 'error'
   data: string
 }
+
+// ---------- 群聊（M3） ----------
+
+export interface GroupMember {
+  id: string
+  type: 'human' | 'agent' | string
+  name?: string
+  trigger?: 'at' | 'keyword' | 'any' | string
+  priority?: number
+  max_turns?: number
+  interrupt_level?: number
+  profile?: string
+}
+
+export interface Group {
+  id: string
+  name: string
+  members: GroupMember[]
+  max_turns_per_topic: number
+  human_silent_threshold: number
+}
+
+export interface GroupState {
+  group_id: string
+  topic_id: string
+  frozen: boolean
+  turn_occupied: boolean
+  current_speaker?: string
+  turns_used: Record<string, number>
+  human_silent_rounds: number
+  max_turns_per_topic: number
+  human_silent_threshold: number
+}
+
+export interface GroupSendResult {
+  message: Message
+  reply?: Message
+  deferred?: Array<{ agent_id: string; content: string; reason: string }>
+  frozen: boolean
+}
