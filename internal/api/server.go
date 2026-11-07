@@ -12,6 +12,7 @@ import (
 
 	"github.com/dddpeter/agent-nexus/internal/bus"
 	"github.com/dddpeter/agent-nexus/internal/config"
+	"github.com/dddpeter/agent-nexus/internal/orchestr"
 	"github.com/dddpeter/agent-nexus/internal/registry"
 	"github.com/dddpeter/agent-nexus/internal/repo"
 	"github.com/dddpeter/agent-nexus/internal/session/group"
@@ -26,6 +27,7 @@ type Deps struct {
 	Registry *registry.Impl
 	Router   *private.Router    // 私聊会话路由（任务 12 起）
 	Groups   *group.Coordinator // 群聊协调器（M3 起；nil = 未启用）
+	Orchestr *orchestr.Builtin  // 任务编排器（M4 起；nil = 未启用）
 	Log      *slog.Logger
 }
 

@@ -49,6 +49,17 @@ func (s *Server) mountAPI(r chi.Router) {
 		r.Put("/config", s.handleGroupConfig)
 	})
 
+	// 任务编排（M4；编排器未启用时 501）
+	r.Post("/tasks", s.handleCreateTask)
+	r.Get("/tasks", s.handleListTasks)
+	r.Route("/tasks/{id}", func(r chi.Router) {
+		r.Get("/", s.handleGetTask)
+		r.Post("/cancel", s.handleCancelTask)
+		r.Post("/resume", s.handleResumeTask)
+	})
+	r.Get("/cron", s.handleListCron)
+	r.Delete("/cron/{id}", s.handleDeleteCron)
+
 	// agents
 	r.Post("/agents", s.handleRegisterAgent)
 	r.Get("/agents", s.handleListAgents)

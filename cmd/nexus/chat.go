@@ -171,3 +171,98 @@ func runGroupSend(c *client, groupRef, content, sender string) error {
 	}
 	return nil
 }
+
+// taskCmd `nexus task`（FR5.4 收尾）：submit / status / cancel / cron。
+func newTaskCmd() *cobra.Command {
+	var server, token, input string
+	cmd := &cobra.Command{Use: "task", Short: "任务编排操作（submit/status/cancel/cron）"}
+	submit := &cobra.Command{
+		Use:   "submit <agent> [agent...]",
+		Short: "提交协作链（每个 agent 一个节点，{{prev}} 自动串接）",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTaskSubmit(newClient(server, token), args, input)
+		},
+	}
+	submit.Flags().StringVar(&input, "input", "", "任务初始输入（首节点 {{prev}} 同源）")
+	status := &cobra.Command{
+		Use:   "status <task-id>",
+		Short: "查询任务状态与节点进度",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTaskStatus(newClient(server, token), args[0])
+		},
+	}
+	cancel := &cobra.Command{
+		Use:   "cancel <task-id>",
+		Short: "取消运行中任务",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := newClient(server, token)
+			return c.do("POST", "/api/tasks/"+args[0]+"/cancel", map[string]any{}, nil)
+		},
+	}
+	cmd.AddCommand(submit, status, cancel)
+	cmd.PersistentFlags().StringVar(&server, "server", "", "nexus 服务地址（默认 $NEXUS_URL 或 http://127.0.0.1:8080）")
+	cmd.PersistentFlags().StringVar(&token, "token", "", "Bearer token（默认 $NEXUS_TOKEN）")
+	return cmd
+}
+
+func runTaskSubmit(c *client, agentRefs []string, input string) error {
+	var agents []chatAgent
+	if err := c.do("GET", "/api/agents", nil, &agents); err != nil {
+		return err
+	}
+	nodes := make([]map[string]any, 0, len(agentRefs))
+	for i, ref := range agentRefs {
+		id := ref
+		if !strings.Contains(ref, "-") || len(ref) < 16 { // 名字解析（nanoid 含 - 且较长）
+			for _, a := range agents {
+				if a.Name == ref {
+					id = a.ID
+					break
+				}
+			}
+		}
+		tpl := "{{prev}}"
+		if i == 0 {
+			tpl = input
+			if tpl == "" {
+				tpl = "{{prev}}"
+			}
+		}
+		nodes = append(nodes, map[string]any{"agent_id": id, "input": tpl})
+	}
+	var res struct {
+		ID string `json:"id"`
+	}
+	if err := c.do("POST", "/api/tasks", map[string]any{"chain": map[string]any{"nodes": nodes, "input": input}}, &res); err != nil {
+		return err
+	}
+	fmt.Printf("submitted: %s\n", res.ID)
+	return nil
+}
+
+func runTaskStatus(c *client, taskID string) error {
+	var t struct {
+		ID     string                   `json:"id"`
+		Status string                   `json:"status"`
+		Result string                   `json:"result"`
+		Error  string                   `json:"error"`
+		Nodes  []map[string]interface{} `json:"nodes"`
+	}
+	if err := c.do("GET", "/api/tasks/"+taskID, nil, &t); err != nil {
+		return err
+	}
+	fmt.Printf("%s  %s\n", t.ID, t.Status)
+	for _, n := range t.Nodes {
+		fmt.Printf("  #%v  %-8v %v  retried=%v\n", n["id"], n["status"], n["agent_id"], n["retried"])
+	}
+	if t.Error != "" {
+		fmt.Println("  error:", t.Error)
+	}
+	if t.Result != "" {
+		fmt.Printf("  result: %.200s\n", t.Result)
+	}
+	return nil
+}

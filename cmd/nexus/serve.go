@@ -39,7 +39,7 @@ func newRootCmd() *cobra.Command {
 		Use:   "nexus",
 		Short: "Nexus — 异构 Agent 纳管与编排平台",
 	}
-	root.AddCommand(newServeCmd(), newAgentCmd(), newChatCmd(), newGroupSendCmd())
+	root.AddCommand(newServeCmd(), newAgentCmd(), newChatCmd(), newGroupSendCmd(), newTaskCmd())
 	return root
 }
 
@@ -131,7 +131,7 @@ func runServe(ctx context.Context, cfg config.Config) error {
 	}
 
 	// 私聊路由 + 内置降级调度器（async 模式回执执行体；Temporal 二期接入）
-	scheduler := orchestr.NewBuiltin(store, b, logger)
+	scheduler := orchestr.NewBuiltin(store, b, reg, logger)
 	router := private.New(store, reg, b, private.Options{
 		SyncTimeout:       300 * time.Second,
 		StreamIdleTimeout: 60 * time.Second,
@@ -149,7 +149,7 @@ func runServe(ctx context.Context, cfg config.Config) error {
 	}
 
 	srv := api.New(api.Deps{
-		Cfg: cfg, Store: store, Bus: b, Registry: reg, Router: router, Groups: coord, Log: logger,
+		Cfg: cfg, Store: store, Bus: b, Registry: reg, Router: router, Groups: coord, Orchestr: scheduler, Log: logger,
 	})
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -161,6 +161,7 @@ func runServe(ctx context.Context, cfg config.Config) error {
 		cancel()
 	}()
 	go coord.Run(ctx)
+	go scheduler.RunCron(ctx, 15*time.Second) // M4 定时调度（15s tick，分钟粒度表达式）
 
 	// 定时备份（F6.2，TODO#9 一半关闭）：VACUUM INTO 快照 data/backups/，保留 7 份
 	if sb, ok := store.(interface {
