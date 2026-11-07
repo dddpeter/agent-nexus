@@ -66,7 +66,7 @@ func newAdapter(t *testing.T, cmdArgs []string, extra map[string]any) *picoclaw.
 // 回显 + 续话：第二次 Send 携带相同 external_ref。
 func TestSendEchoAndSessionContinuity(t *testing.T) {
 	ctx := context.Background()
-	ad := newAdapter(t, echodCmd("echo"), nil)
+	ad := newAdapter(t, echodCmd("echo"), map[string]any{"output": "json"})
 
 	require.NoError(t, ad.HealthCheck(ctx))
 	sid, err := ad.CreateSession(ctx, adapter.SessionOpts{})
@@ -87,7 +87,7 @@ func TestSendEchoAndSessionContinuity(t *testing.T) {
 // 输出解析失败重试一次后报错（--mode badjson）。
 func TestParseFailRetry(t *testing.T) {
 	ctx := context.Background()
-	ad := newAdapter(t, echodCmd("badjson"), nil)
+	ad := newAdapter(t, echodCmd("badjson"), map[string]any{"output": "json"}) // 默认 lastline 下坏 JSON 也能取末行，需显式 json 验证解析重试
 	sid, err := ad.CreateSession(ctx, adapter.SessionOpts{})
 	require.NoError(t, err)
 	_, err = ad.Send(ctx, sid, adapter.Message{Content: "x"})
@@ -178,7 +178,14 @@ func TestStatelessTemplate(t *testing.T) {
 
 // 配置校验：缺 command → 字段错误；空列表拒绝。
 func TestConfigValidation(t *testing.T) {
-	_, err := picoclaw.NewFactory().New(map[string]any{})
+	// 空配置 → 开箱即用（schema 默认模板，降低注册难度）
+	ad, err := picoclaw.NewFactory().New(map[string]any{})
+	require.NoError(t, err)
+	cmd := ad.Info()
+	assert.NotEmpty(t, cmd.Name)
+
+	// 显式传空 list → 明确拒绝
+	_, err = picoclaw.NewFactory().New(map[string]any{"command": []any{}})
 	require.Error(t, err)
 	var fe *adapter.FieldError
 	require.ErrorAs(t, err, &fe)

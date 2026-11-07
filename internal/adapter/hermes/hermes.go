@@ -37,8 +37,8 @@ func (f *Factory) Name() string { return "hermes" }
 
 func (f *Factory) ConfigSchema() adapter.Schema {
 	return adapter.Schema{Fields: []adapter.SchemaField{
-		{Name: "base_url", Label: "Gateway 地址", Type: adapter.FieldString, Required: true,
-			Help: "hermes gateway base URL，如 http://localhost:8642"},
+		{Name: "base_url", Label: "Gateway 地址", Type: adapter.FieldString, Default: "http://127.0.0.1:8642",
+			Help: "hermes gateway base URL；默认本机网关 :8642，改 host/端口即可"},
 		{Name: "profile", Label: "Profile", Type: adapter.FieldString, Default: "default",
 			Options: []string{"default", "coder", "research"},
 			Help:    "仅用作逻辑 agent 命名（hermes-<profile>），不改变线协议"},

@@ -27,16 +27,19 @@ func (f *Factory) Name() string { return "picoclaw" }
 
 func (f *Factory) ConfigSchema() adapter.Schema {
 	return adapter.Schema{Fields: []adapter.SchemaField{
-		{Name: "command", Label: "命令行模板", Type: adapter.FieldList, Required: true,
-			Help: `如 ["picoclaw","agent","-p","{{input}}","--session","{{session}}","--output","json"]；占位符 {{input}} {{session}} {{context}}；消息内容不经 shell，无命令注入面`},
+		{Name: "command", Label: "命令行模板", Type: adapter.FieldList,
+			Default: []any{"picoclaw", "agent", "-m", "{{input}}", "-s", "agent:main:{{session}}", "--no-color"},
+			Help:    "默认即真实 picoclaw 实测模板；占位符 {{input}} {{session}} {{context}}；消息内容不经 shell，无命令注入面"},
 		{Name: "probe_command", Label: "探活命令", Type: adapter.FieldList,
-			Help: "如 [\"picoclaw\",\"--version\"]；留空则仅校验可执行文件存在"},
-		{Name: "output", Label: "输出解析", Type: adapter.FieldString, Default: "json",
+			Default: []any{"picoclaw", "version"},
+			Help:    "默认 picoclaw version；留空则仅校验可执行文件存在"},
+		{Name: "output", Label: "输出解析", Type: adapter.FieldString, Default: "lastline",
 			Options: []string{"json", "text", "lastline"},
-			Help:    "json=解析最后一行 {\"reply\",\"session\"}；text=全文即回复；lastline=取最后一行非空文本（真实 CLI 的 banner/日志噪音下取回复行）"},
-		{Name: "output_prefix", Label: "回复行前缀", Type: adapter.FieldString,
-			Help: "lastline 模式可选：回复行前缀（如 picoclaw 的 '鲎'）；命中后取该前缀至输出末尾（多行回复/代码块完整提取），未命中回退末行"},
-		{Name: "timeout", Label: "调用超时", Type: adapter.FieldDuration, Default: "5m0s"},
+			Help:    "默认 lastline：真实 CLI 的 banner/日志噪音下取回复行；json=解析最后一行 {\"reply\",\"session\"}；text=全文即回复"},
+		{Name: "output_prefix", Label: "回复行前缀", Type: adapter.FieldString, Default: "鲎",
+			Help: "lastline 模式：命中前缀（picoclaw 回复行以鲎开头）后取该行至输出末尾，多行回复/代码块完整提取"},
+		{Name: "timeout", Label: "调用超时", Type: adapter.FieldDuration, Default: "10m0s",
+			Help: "真实 LLM 回合常见 10-90s，默认 10m"},
 		{Name: "cwd", Label: "工作目录", Type: adapter.FieldString},
 		{Name: "env", Label: "附加环境变量", Type: adapter.FieldList, Help: "KEY=VAL 列表"},
 	}}
@@ -49,6 +52,7 @@ func (f *Factory) New(cfg adapter.Config) (adapter.AgentAdapter, error) {
 	}
 	cmdList := adapter.GetList(normalized, "command")
 	if len(cmdList) == 0 {
+		// 显式传空 list 才会到这（未配置走 schema 默认模板）；缺命令无法执行
 		return nil, adapter.NewFieldError("command", "required")
 	}
 	return &Adapter{

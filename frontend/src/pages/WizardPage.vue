@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// 注册向导（FR1.1 三步）：选类型 → 配置与能力 → 测试并提交。
-// 测试走 POST /api/agents/test（不落库）；提交走 POST /api/agents（探活通过自动 online）。
+// 注册向导（FR1.1 三步）：选类型 → 配置（默认即实测可用配置）→ 测试并提交。
+// 降低注册难度：adapter 卡片化 + 默认配置预填（schema Default 来自真实 agent 实测）+
+// 名字自动生成 + 能力折叠为高级项 + 探活失败给排查建议。
 import { computed, onMounted, ref } from 'vue'
 import DynamicConfigForm from '../components/DynamicConfigForm.vue'
 import { buildConfigPayload, initialFormValues, listAdapters, registerAgent, testSpec } from '../api/agents'
@@ -15,7 +16,8 @@ const name = ref('')
 const adapterName = ref('')
 const formValues = ref<Record<string, string | boolean>>({})
 
-// 能力可选覆盖
+// 能力可选覆盖（高级项，默认折叠）
+const showAdvanced = ref(false)
 const capMaxConcurrency = ref('')
 const capInterruptLevel = ref('')
 const capTypicalLatencyS = ref('')
@@ -26,6 +28,13 @@ const submitting = ref(false)
 const testResult = ref<TestResult | null>(null)
 const submitOk = ref<Agent | null>(null)
 const submitError = ref('')
+
+// adapter 快速开始卡片元数据（与后端实测默认配置呼应）
+const ADAPTER_CARDS: Record<string, { tagline: string; ready: string }> = {
+  echod: { tagline: '内置测试假 agent（回显/流式/故障注入）', ready: '零配置，开箱即用' },
+  hermes: { tagline: 'HTTP 型范式 · 接入本机 hermes 网关', ready: '默认指向本机 :8642，通常只需确认地址' },
+  picoclaw: { tagline: 'CLI 型范式 · 调用本机 picoclaw 命令', ready: '命令模板/输出解析已预填实测值' },
+}
 
 const schema = computed(() => adapters.value.find((a) => a.name === adapterName.value)?.config_schema.fields ?? [])
 
@@ -45,6 +54,7 @@ function pickAdapter(name: string): void {
   adapterName.value = name
   formValues.value = initialFormValues(schema.value)
   testResult.value = null
+  submitOk.value = null
 }
 
 function go(n: number): void {
@@ -53,6 +63,14 @@ function go(n: number): void {
 
 function stepClass(n: number): Record<string, boolean> {
   return { on: step.value === n, done: step.value > n }
+}
+
+/** 名字留空时自动生成（adapter-日期-随机后缀）。 */
+function autoName(): string {
+  const d = new Date()
+  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+  const suffix = Math.random().toString(36).slice(2, 6)
+  return `${adapterName.value || 'agent'}-${ymd}-${suffix}`
 }
 
 /** 能力覆盖 → Capabilities 负载（未设置的项传 0，后端 MergeDefaults 沿用 adapter 默认）。 */
@@ -70,6 +88,28 @@ function capabilitiesPayload(): Record<string, unknown> | undefined {
   }
 }
 
+/** 探活失败的排查建议（按 adapter 与错误内容映射常见原因）。 */
+const HINTS: Record<string, Array<[string, string]>> = {
+  hermes: [
+    ['unauthorized|401', 'API Key 不正确——确认网关 API_SERVER_KEY'],
+    ['unreachable|connect|refused', '网关未启动或地址/端口不对——检查 hermes gateway 是否在运行'],
+    ['503', '网关在线但该 profile 不可用'],
+  ],
+  picoclaw: [
+    ['executable|not found|no such', 'picoclaw 不在 PATH——用绝对路径或先安装'],
+    ['probe|exit', '探活命令失败——检查二进制与版本'],
+    ['parse|malformed|empty', '输出解析失败——确认 output 模式与回复行前缀'],
+  ],
+  echod: [['down|health', 'echod mode=down 为预期探活失败（故障注入模式）']],
+}
+
+function troubleshooting(err: string): string {
+  for (const [pattern, tip] of HINTS[adapterName.value] ?? []) {
+    if (new RegExp(pattern, 'i').test(err)) return tip
+  }
+  return ''
+}
+
 async function runTest(): Promise<void> {
   if (testing.value) return
   testing.value = true
@@ -85,11 +125,7 @@ async function runTest(): Promise<void> {
 
 async function submit(): Promise<void> {
   if (submitting.value) return
-  if (!name.value.trim()) {
-    submitError.value = 'Agent 名字必填'
-    go(1)
-    return
-  }
+  if (!name.value.trim()) name.value = autoName()
   submitting.value = true
   submitError.value = ''
   try {
@@ -115,53 +151,70 @@ async function submit(): Promise<void> {
     <div class="page-head">
       <div>
         <h1>注册 Agent</h1>
-        <div class="sub">三步接入：选类型 → 配置 → 测试并提交</div>
+        <div class="sub">默认配置即真实 agent 实测值——多数情况只需确认地址，一路下一步</div>
       </div>
     </div>
 
     <div class="steps">
       <div v-for="n in 3" :key="n" class="step" :class="stepClass(n)">
         <span class="dot">{{ step > n ? '✓' : n }}</span>
-        {{ ['选择类型', '配置与能力', '测试并提交'][n - 1] }}
+        {{ ['选择类型', '确认配置', '测试并提交'][n - 1] }}
       </div>
     </div>
 
     <div class="card">
       <div v-if="loadError" class="callout bad">{{ loadError }}</div>
 
-      <!-- 第 1 步：名字 + adapter -->
+      <!-- 第 1 步：快速开始卡片 + 名字 -->
       <fieldset v-show="step === 1" style="border: none; padding: 0; margin: 0">
-        <label class="f-label">Agent 名字 <span class="f-req">*</span></label>
-        <input v-model="name" class="f-input" type="text" placeholder="如 echod-main、hermes-coder" required />
+        <label class="f-label">Agent 名字（留空自动生成）</label>
+        <input v-model="name" class="f-input" type="text" :placeholder="`如 ${adapterName || 'agent'}-20261107-a1b2`" />
 
-        <label class="f-label">Adapter 类型 <span class="f-req">*</span></label>
-        <select class="f-input" :value="adapterName" @change="pickAdapter(($event.target as HTMLSelectElement).value)">
-          <option v-for="a in adapters" :key="a.name" :value="a.name">{{ a.name }}</option>
-        </select>
-        <div class="f-hint">hermes = HTTP 型范式 · picoclaw = CLI 型范式 · echod = 内置测试假 agent</div>
+        <label class="f-label">选择类型</label>
+        <div class="adapter-cards">
+          <button
+            v-for="a in adapters"
+            :key="a.name"
+            class="adapter-card"
+            :class="{ on: adapterName === a.name }"
+            type="button"
+            @click="pickAdapter(a.name)"
+          >
+            <span class="adapter-name">{{ a.name }}</span>
+            <span class="adapter-tagline">{{ ADAPTER_CARDS[a.name]?.tagline ?? '' }}</span>
+            <span v-if="ADAPTER_CARDS[a.name]?.ready" class="adapter-ready">✓ {{ ADAPTER_CARDS[a.name].ready }}</span>
+          </button>
+        </div>
+
         <div style="margin-top: 18px">
           <button class="btn btn-primary" type="button" @click="go(2)">下一步</button>
         </div>
       </fieldset>
 
-      <!-- 第 2 步：schema 动态配置 + 能力覆盖 -->
+      <!-- 第 2 步：schema 动态配置（默认已预填）+ 能力折叠 -->
       <fieldset v-show="step === 2" style="border: none; padding: 0; margin: 0">
+        <div class="callout ok" style="margin: 0 0 14px">
+          ✓ 配置已预填实测默认值——通常只需确认地址/路径与真实环境一致
+        </div>
         <label class="f-label">Adapter 配置</label>
         <DynamicConfigForm v-model="formValues" :fields="schema" />
 
-        <label class="f-label">能力（可选覆盖）</label>
-        <div class="f-row">
-          <div>
-            <input v-model="capMaxConcurrency" class="f-input" type="number" placeholder="最大并发（默认 1）" min="1" />
+        <details class="adv" :open="showAdvanced" @toggle="showAdvanced = ($event.target as HTMLDetailsElement).open">
+          <summary class="f-label" style="cursor: pointer">高级：能力覆盖（可选，默认沿用 adapter 声明）</summary>
+          <div class="f-row" style="margin-top: 6px">
+            <div>
+              <input v-model="capMaxConcurrency" class="f-input" type="number" placeholder="最大并发（默认 1）" min="1" />
+            </div>
+            <div>
+              <input v-model="capInterruptLevel" class="f-input" type="number" placeholder="插话级别 0-2" min="0" max="2" />
+            </div>
+            <div>
+              <input v-model="capTypicalLatencyS" class="f-input" type="text" placeholder="典型延迟（秒）" />
+            </div>
           </div>
-          <div>
-            <input v-model="capInterruptLevel" class="f-input" type="number" placeholder="插话级别 0-2" min="0" max="2" />
-          </div>
-          <div>
-            <input v-model="capTypicalLatencyS" class="f-input" type="text" placeholder="典型延迟（秒）" />
-          </div>
-        </div>
-        <div class="f-hint">未填项沿用 adapter 默认能力。</div>
+          <div class="f-hint">能力只开不关：覆盖值仅能提升（后端 MergeDefaults 忽略关闭动作）。</div>
+        </details>
+
         <div style="display: flex; gap: 10px; margin-top: 18px">
           <button class="btn btn-secondary" type="button" @click="go(1)">上一步</button>
           <button class="btn btn-primary" type="button" @click="go(3)">下一步</button>
@@ -171,7 +224,7 @@ async function submit(): Promise<void> {
       <!-- 第 3 步：测试 + 提交 -->
       <fieldset v-show="step === 3" style="border: none; padding: 0; margin: 0">
         <div class="f-hint" style="margin-bottom: 10px">
-          提交前先测试连通性（探活 + 可选试发）；测试失败仍可提交，agent 将以 offline 保存。
+          测试失败也可以提交（agent 将以 offline 保存），但建议先按下方建议排查。
         </div>
         <label class="small" style="display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink-2)">
           <input v-model="sendMessage" type="checkbox" /> 测试时试发一条消息
@@ -182,6 +235,9 @@ async function submit(): Promise<void> {
           <template v-else>✘ 测试失败</template>
           （{{ testResult.duration_ms }} ms<template v-if="sendMessage"> · 含试发消息</template>）
           <span v-if="testResult.error" class="detail">{{ testResult.error }}</span>
+          <span v-if="!testResult.ok && testResult.error" class="detail" style="color: var(--signal-2)">
+            排查建议：{{ troubleshooting(testResult.error) || '检查配置项与真实环境是否一致' }}
+          </span>
         </div>
 
         <div v-if="submitOk" class="callout ok" style="margin-top: 12px">
@@ -206,3 +262,22 @@ async function submit(): Promise<void> {
     </div>
   </div>
 </template>
+
+<style scoped>
+.adapter-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (max-width: 760px) { .adapter-cards { grid-template-columns: 1fr; } }
+.adapter-card {
+  display: flex; flex-direction: column; gap: 6px; text-align: left; cursor: pointer;
+  background: rgba(11, 17, 32, .6); border: 1px solid var(--line-strong); border-radius: var(--r-m);
+  padding: 14px 16px; color: var(--ink); transition: border-color .12s, box-shadow .12s, background .12s;
+}
+.adapter-card:hover { border-color: var(--signal); }
+.adapter-card.on { border-color: var(--signal); background: var(--signal-wash); box-shadow: 0 0 0 3px rgba(56, 225, 255, .1); }
+.adapter-name { font: 700 14px var(--mono); letter-spacing: .04em; color: var(--signal); }
+.adapter-tagline { font-size: 12px; color: var(--ink-2); line-height: 1.5; }
+.adapter-ready { font: 600 11px var(--mono); color: var(--ok); }
+.adv summary { list-style: none; }
+.adv summary::before { content: "▸ "; color: var(--signal); }
+.adv[open] summary::before { content: "▾ "; }
+.adv summary::-webkit-details-marker { display: none; }
+</style>

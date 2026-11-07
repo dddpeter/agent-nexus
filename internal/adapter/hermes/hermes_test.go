@@ -48,13 +48,11 @@ func TestHealthCheck(t *testing.T) {
 	assert.Contains(t, err.Error(), "unreachable", "连接拒绝应给出明确错误而非泛化 500")
 }
 
-// 配置校验：缺 base_url → 字段错误。
+// 配置校验：空配置 → 开箱即用（base_url 默认本机网关，降低注册难度）。
 func TestConfigValidation(t *testing.T) {
-	_, err := hermes.NewFactory().New(map[string]any{})
-	require.Error(t, err)
-	var fe *adapter.FieldError
-	require.ErrorAs(t, err, &fe)
-	assert.Equal(t, "base_url", fe.Field)
+	ad, err := hermes.NewFactory().New(map[string]any{})
+	require.NoError(t, err)
+	assert.NotNil(t, ad)
 }
 
 // 建会话 + Send 回显 + SessionRef 回填（external_ref 语义）。
