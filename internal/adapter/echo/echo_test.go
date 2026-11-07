@@ -243,52 +243,54 @@ func TestEchodHTTPGateway(t *testing.T) {
 	defer resp.Body.Close()
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// 建会话
-	resp, err = http.Post(base+"/v1/sessions", "application/json", strings.NewReader(`{}`))
+	// 建会话（真实 hermes 协议：{session:{id}}）
+	resp, err = http.Post(base+"/api/sessions", "application/json", strings.NewReader(`{}`))
 	require.NoError(t, err)
-	require.Equal(t, 201, resp.StatusCode)
+	require.Equal(t, 200, resp.StatusCode)
 	var cr struct {
-		SessionID string `json:"session_id"`
+		Session struct {
+			ID string `json:"id"`
+		} `json:"session"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&cr))
 	resp.Body.Close()
-	require.NotEmpty(t, cr.SessionID)
+	require.NotEmpty(t, cr.Session.ID)
 
-	// 发消息 → 回显（同 session）
-	payload := `{"content":"hi over http"}`
-	resp, err = http.Post(base+"/v1/sessions/"+cr.SessionID+"/messages", "application/json", strings.NewReader(payload))
+	// 发消息 → 回显（同 session，真实 chat 门形状）
+	payload := `{"message":"hi over http"}`
+	resp, err = http.Post(base+"/api/sessions/"+cr.Session.ID+"/chat", "application/json", strings.NewReader(payload))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, 200, resp.StatusCode)
 	var mr struct {
-		Reply   string `json:"reply"`
-		Session string `json:"session"`
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&mr))
-	assert.Equal(t, "hi over http", mr.Reply)
-	assert.Equal(t, cr.SessionID, mr.Session)
+	assert.Equal(t, "hi over http", mr.Message.Content)
 
-	// 未知会话 → 410（F2.4 session lost 翻译源）
-	resp, err = http.Post(base+"/v1/sessions/ghost/messages", "application/json", strings.NewReader(payload))
+	// 未知会话 → 404 session_not_found（F2.4 懒建自愈翻译源）
+	resp, err = http.Post(base+"/api/sessions/ghost/chat", "application/json", strings.NewReader(payload))
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusGone, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
 func TestEchodHTTPAuthAndDown(t *testing.T) {
 	// APIKey 鉴权
 	srv := newEchodHTTPServer(t, echodhttp.Config{Mode: "echo", APIKey: "sk-http-test"})
-	resp, err := http.Post(srv.URL+"/v1/sessions", "application/json", strings.NewReader(`{}`))
+	resp, err := http.Post(srv.URL+"/api/sessions", "application/json", strings.NewReader(`{}`))
 	require.NoError(t, err)
 	resp.Body.Close()
 	assert.Equal(t, 401, resp.StatusCode)
 
-	req, _ := http.NewRequest("POST", srv.URL+"/v1/sessions", strings.NewReader(`{}`))
+	req, _ := http.NewRequest("POST", srv.URL+"/api/sessions", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer sk-http-test")
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	resp.Body.Close()
-	assert.Equal(t, 201, resp.StatusCode)
+	assert.Equal(t, 200, resp.StatusCode)
 
 	// down：health 503、建会话 503
 	srv2 := newEchodHTTPServer(t, echodhttp.Config{Mode: "down"})
@@ -297,7 +299,7 @@ func TestEchodHTTPAuthAndDown(t *testing.T) {
 	resp.Body.Close()
 	assert.Equal(t, 503, resp.StatusCode)
 
-	resp, err = http.Post(srv2.URL+"/v1/sessions", "application/json", strings.NewReader(`{}`))
+	resp, err = http.Post(srv2.URL+"/api/sessions", "application/json", strings.NewReader(`{}`))
 	require.NoError(t, err)
 	resp.Body.Close()
 	assert.Equal(t, 503, resp.StatusCode)

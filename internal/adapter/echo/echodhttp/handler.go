@@ -1,12 +1,16 @@
-// Package echodhttp 提供内置测试用假 agent "echod" 的 HTTP 形态
-// （hermes 范式 fake gateway：/health、/v1/sessions、/v1/sessions/{id}/messages、stream）。
+// Package echodhttp 提供内置测试用假 agent "echod" 的 HTTP 形态。
+// 线协议对齐真实 hermes gateway（v0.22.7 实测校准，2026-11-07）：
+//
+//	GET  /health                     探活
+//	POST /api/sessions               建会话 → {"session":{"id":...}}
+//	POST /api/sessions/{id}/chat     {"message":...} → {"message":{"content":...}}；未知会话 404
+//	POST /v1/chat/completions        OpenAI 兼容 SSE（X-Hermes-Session-Id 续话）
 package echodhttp
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -44,9 +48,9 @@ func NewMux(cfg Config) *http.ServeMux {
 	h := New(cfg)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", h.health)
-	mux.HandleFunc("POST /v1/sessions", h.createSession)
-	mux.HandleFunc("POST /v1/sessions/{id}/messages", h.sendMessage)
-	mux.HandleFunc("POST /v1/sessions/{id}/stream", h.streamMessage)
+	mux.HandleFunc("POST /api/sessions", h.createSession)
+	mux.HandleFunc("POST /api/sessions/{id}/chat", h.chat)
+	mux.HandleFunc("POST /v1/chat/completions", h.completions)
 	return mux
 }
 
@@ -72,13 +76,9 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-type createSessionResp struct {
-	SessionID string `json:"session_id"`
-}
-
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	if !h.auth(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "bad api key"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"message": "Invalid gateway API key", "code": "gateway_auth_failed"}})
 		return
 	}
 	if h.cfg.Mode == "down" {
@@ -89,29 +89,30 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	h.sessions[sid] = true
 	h.mu.Unlock()
-	writeJSON(w, http.StatusCreated, createSessionResp{SessionID: sid})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"object":  "hermes.session",
+		"session": map[string]any{"id": sid, "source": "api_server", "message_count": 0},
+	})
 }
 
-type sendMessageReq struct {
-	Content string `json:"content"`
-	// Session 显式续话（可省略，URL 已带）
-	Session string `json:"session,omitempty"`
+func (h *Handler) replyFor(content string) string {
+	if h.cfg.Reply != "" {
+		return h.cfg.Reply
+	}
+	return content
 }
 
-type sendMessageResp struct {
-	Reply   string `json:"reply"`
-	Session string `json:"session"`
-	Done    bool   `json:"done"`
-}
-
-func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
+// chat POST /api/sessions/{id}/chat（真实网关同步聊天门）。
+func (h *Handler) chat(w http.ResponseWriter, r *http.Request) {
 	if !h.auth(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "bad api key"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"message": "Invalid gateway API key", "code": "gateway_auth_failed"}})
 		return
 	}
-	var req sendMessageReq
+	var req struct {
+		Message string `json:"message"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad json: " + err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"message": "bad json: " + err.Error()}})
 		return
 	}
 	sid := r.PathValue("id")
@@ -119,8 +120,10 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	known := h.sessions[sid]
 	h.mu.Unlock()
 	if !known {
-		// agent 侧会话丢失（F2.4 场景）：返回 410 供 adapter 翻译为 ErrSessionLost
-		writeJSON(w, http.StatusGone, map[string]any{"error": "session expired on agent side", "session": sid})
+		// agent 侧会话丢失（F2.4 场景）：404 session_not_found 供 adapter 懒建重试
+		writeJSON(w, http.StatusNotFound, map[string]any{
+			"error": map[string]string{"message": "Session not found: " + sid, "code": "session_not_found"},
+		})
 		return
 	}
 	switch h.cfg.Mode {
@@ -134,48 +137,61 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-time.After(time.Duration(h.cfg.DelayMs) * time.Millisecond):
 		}
-		content := h.replyFor(req.Content)
-		writeJSON(w, http.StatusOK, sendMessageResp{Reply: content, Session: sid, Done: true})
-	case "fixed":
-		content := h.replyFor(req.Content)
-		writeJSON(w, http.StatusOK, sendMessageResp{Reply: content, Session: sid, Done: true})
-	default: // echo
-		writeJSON(w, http.StatusOK, sendMessageResp{Reply: req.Content, Session: sid, Done: true})
+		h.chatCompleted(w, sid, h.replyFor(req.Message))
+	default: // echo / fixed / stream（同步门整段返回）
+		h.chatCompleted(w, sid, h.replyFor(req.Message))
 	}
 }
 
-func (h *Handler) replyFor(content string) string {
-	if h.cfg.Reply != "" {
-		return h.cfg.Reply
-	}
-	return content
+func (h *Handler) chatCompleted(w http.ResponseWriter, sid, content string) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"object":     "hermes.session.chat.completion",
+		"status":     "completed",
+		"session_id": sid,
+		"message":    map[string]any{"role": "assistant", "content": content},
+	})
 }
 
-type streamLine struct {
-	Type    string `json:"type"`
-	Data    string `json:"data"`
-	Session string `json:"session,omitempty"`
-}
-
-func (h *Handler) streamMessage(w http.ResponseWriter, r *http.Request) {
+// completions POST /v1/chat/completions：OpenAI 兼容；stream=true 走 SSE delta 分片。
+func (h *Handler) completions(w http.ResponseWriter, r *http.Request) {
 	if !h.auth(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "bad api key"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"message": "Invalid gateway API key", "code": "gateway_auth_failed"}})
 		return
 	}
-	var req sendMessageReq
+	var req struct {
+		Model    string `json:"model"`
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+		Stream bool `json:"stream"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad json"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"message": "bad json"}})
 		return
 	}
-	sid := r.PathValue("id")
-	content := h.replyFor(req.Content)
+	content := ""
+	if len(req.Messages) > 0 {
+		content = h.replyFor(req.Messages[len(req.Messages)-1].Content)
+	}
+
+	if !req.Stream {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": "chatcmpl-echod", "object": "chat.completion", "model": req.Model,
+			"choices": []any{map[string]any{
+				"index": 0, "finish_reason": "stop",
+				"message": map[string]any{"role": "assistant", "content": content},
+			}},
+		})
+		return
+	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "streaming unsupported"})
 		return
 	}
-	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 
@@ -188,21 +204,32 @@ func (h *Handler) streamMessage(w http.ResponseWriter, r *http.Request) {
 	if per == 0 {
 		per = 1
 	}
+	sendChunk := func(delta string, finish *string) {
+		chunk := map[string]any{
+			"id": "chatcmpl-echod", "object": "chat.completion.chunk", "model": "echod",
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": delta}, "finish_reason": finish}},
+		}
+		b, _ := json.Marshal(chunk)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
 	for i := 0; i < len(runes); i += per {
 		end := i + per
 		if end > len(runes) {
 			end = len(runes)
 		}
-		b, _ := json.Marshal(streamLine{Type: "delta", Data: string(runes[i:end])})
-		fmt.Fprintln(w, string(b))
-		flusher.Flush()
+		sendChunk(string(runes[i:end]), nil)
 		select {
 		case <-r.Context().Done():
 			return
 		case <-time.After(30 * time.Millisecond):
 		}
 	}
-	b, _ := json.Marshal(streamLine{Type: "final", Data: content, Session: sid})
-	fmt.Fprintln(w, strings.TrimSpace(string(b)))
+	stop := "stop"
+	if len(runes) == 0 {
+		sendChunk("", &stop)
+	}
+	sendChunk("", &stop)
+	fmt.Fprint(w, "data: [DONE]\n\n")
 	flusher.Flush()
 }

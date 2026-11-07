@@ -76,7 +76,7 @@ func TestSendEchoRoundtrip(t *testing.T) {
 	assert.Equal(t, "second turn", reply2.Content)
 }
 
-// agent 侧会话丢失 → ErrSessionLost（F2.4 自动重建依据）。
+// 网关重启丢会话 → chat 404 → 懒建新会话自愈（F2.4 语义升级：adapter 侧重建而非报错）。
 func TestSessionLost(t *testing.T) {
 	ctx := context.Background()
 
@@ -92,8 +92,9 @@ func TestSessionLost(t *testing.T) {
 	require.NoError(t, err)
 	sid, err := ad.CreateSession(ctx, adapter.SessionOpts{})
 	require.NoError(t, err)
-	_, err = ad.Send(ctx, sid, adapter.Message{Content: "before restart"})
+	reply, err := ad.Send(ctx, sid, adapter.Message{Content: "before restart"})
 	require.NoError(t, err)
+	require.Equal(t, string(sid), reply.SessionRef)
 
 	srvA.Close()
 	time.Sleep(50 * time.Millisecond)
@@ -104,8 +105,26 @@ func TestSessionLost(t *testing.T) {
 	srvB.Start()
 	t.Cleanup(srvB.Close)
 
-	_, err = ad.Send(ctx, sid, adapter.Message{Content: "after restart"})
-	require.ErrorIs(t, err, adapter.ErrSessionLost, "gateway 丢失会话应翻译为 ErrSessionLost")
+	// 重启后旧会话 404 → 懒建新会话重发成功；SessionRef 指向新 gateway 会话
+	reply2, err := ad.Send(ctx, sid, adapter.Message{Content: "after restart"})
+	require.NoError(t, err, "网关丢会话应懒建自愈而非报错")
+	assert.NotEqual(t, string(sid), reply2.SessionRef, "应指向新建的 gateway 会话")
+	assert.Equal(t, "after restart", reply2.Content)
+
+	// 平台 sid（非网关会话）首条消息同样自愈：懒建 + SessionRef 回填
+	reply3, err := ad.Send(ctx, "platform-sid-xyz", adapter.Message{Content: "first turn"})
+	require.NoError(t, err)
+	assert.Equal(t, "first turn", reply3.Content)
+	assert.NotEmpty(t, reply3.SessionRef, "回填 external_ref 依据")
+}
+
+// 网关 down 时懒建也失败 → 错误明确（不吞掉）。
+func TestSessionLazyCreateDownGateway(t *testing.T) {
+	ctx := context.Background()
+	ad := newHermesWithGateway(t, echodhttp.Config{Mode: "down"}, nil)
+	_, err := ad.Send(ctx, "platform-sid-abc", adapter.Message{Content: "hi"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lazy session create", "懒建失败应明确报错而非静默")
 }
 
 // Stream：ndjson 转译 delta/final。
