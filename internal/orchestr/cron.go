@@ -267,7 +267,9 @@ func (o *Builtin) fireCron(ctx context.Context, j repo.CronJob, now time.Time) {
 }
 
 // targetsOffline 目标涉及的 agent 是否有非 online 者（返回首个 offline 的 agent id）。
-// chain 目标检查全部节点（含 parallel 子节点）。
+// chain 目标检查全部节点（含 parallel 子节点）；parallel 容器节点仅 fan-out 无 agent
+// （AgentID 为空，validateNodes 允许），不能参与检查——否则 AgentStatus("") 恒 not-found，
+// 含 parallel 节点的 chain 目标会被永久 skipped_offline（2026-11-07 评审修复）。
 func (o *Builtin) targetsOffline(ctx context.Context, t CronTarget) (bool, string) {
 	var ids []string
 	switch t.Type {
@@ -276,7 +278,9 @@ func (o *Builtin) targetsOffline(ctx context.Context, t CronTarget) (bool, strin
 	case "chain":
 		if t.Chain != nil {
 			for _, n := range t.Chain.Nodes {
-				ids = append(ids, n.AgentID)
+				if n.AgentID != "" {
+					ids = append(ids, n.AgentID)
+				}
 				for _, p := range n.Parallel {
 					ids = append(ids, p.AgentID)
 				}
