@@ -416,3 +416,43 @@ func TestClosedSessionRejected(t *testing.T) {
 	_, err := r.SendMessage(ctx, sess.ID, "x", private.ModeSync)
 	assert.ErrorIs(t, err, private.ErrSessionClosed)
 }
+
+// 回归（集成测试实机抓到的 P0）：API 层转发完 final 帧即取消请求 ctx，
+// 落库用独立 ctx——final 后取消不得丢 agent 回复。
+func TestStreamFinalPersistAfterCancel(t *testing.T) {
+	r, _, store, _, _ := newRouter(t, adapter.Config{"mode": "stream", "stream_chunks": 3, "stream_interval_ms": 10},
+		private.Options{})
+	ctx := context.Background()
+
+	sess, err := r.CreateSession(ctx, agentID(t))
+	require.NoError(t, err)
+
+	sctx, cancel := context.WithCancel(ctx)
+	ch, closeFn, err := r.StreamMessage(sctx, sess.ID, "取消竞态回归")
+	require.NoError(t, err)
+	defer closeFn()
+
+	// 读到 final 帧立即取消（复现 API handler 的 return→cancel 时序）
+	gotFinal := false
+	for ev := range ch {
+		if ev.Type == adapter.StreamFinal {
+			gotFinal = true
+			cancel()
+			break
+		}
+	}
+	require.True(t, gotFinal)
+	// API 层此刻已 return；落库在后台 goroutine 用独立 ctx 完成
+	time.Sleep(200 * time.Millisecond)
+
+	msgs, err := store.Messages().ListBySession(context.Background(), sess.ID)
+	require.NoError(t, err)
+	var agentMsg *repo.Message
+	for i := range msgs {
+		if msgs[i].SenderType == repo.SenderAgent {
+			agentMsg = &msgs[i]
+		}
+	}
+	require.NotNil(t, agentMsg, "final 后取消请求 ctx 不得丢 agent 回复")
+	assert.Equal(t, "取消竞态回归", agentMsg.Content)
+}

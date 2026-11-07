@@ -558,7 +558,11 @@ func (r *Router) StreamMessage(ctx context.Context, sessionID, content string) (
 						assembled.WriteString(ev.Data) // 无 delta 的 final 自带全量
 					}
 					send(out, ev)
-					r.finalizeStream(ctx, sess, agentID, &human, assembled.String())
+					// 落库用独立 ctx：API 层转发完 final 帧即 return 并取消请求 ctx，
+					// 此时本 goroutine 才开始落库——曾因复用请求 ctx 丢 agent 回复（集成测试实机抓到）
+					pctx, pcancel := context.WithTimeout(context.Background(), 15*time.Second)
+					r.finalizeStream(pctx, sess, agentID, &human, assembled.String())
+					pcancel()
 					return
 				case adapter.StreamError:
 					send(out, ev)
@@ -569,9 +573,11 @@ func (r *Router) StreamMessage(ctx context.Context, sessionID, content string) (
 				// 60s 无 delta 判死（U-F2-04）
 				send(out, adapter.StreamEvent{Type: adapter.StreamError,
 					Data: fmt.Sprintf("stream idle for %s, abort", r.opts.StreamIdleTimeout), ErrType: "timeout"})
-				r.appendSystem(ctx, sess.ID, agentID,
+				sctx, scancel := context.WithTimeout(context.Background(), 15*time.Second)
+				r.appendSystem(sctx, sess.ID, agentID,
 					fmt.Sprintf("[stream timeout] %s 无增量输出", r.opts.StreamIdleTimeout),
 					strPtr(fmt.Sprintf("%d", human.ID)))
+				scancel()
 				return
 			case <-ctx.Done():
 				send(out, adapter.StreamEvent{Type: adapter.StreamError, Data: ctx.Err().Error(), ErrType: "canceled"})
