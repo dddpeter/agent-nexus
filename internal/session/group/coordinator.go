@@ -284,17 +284,15 @@ func (c *Coordinator) SnapshotAll(ctx context.Context) {
 	}
 }
 
-// SessionOf 群会话 id（未发言过为空）。
+// SessionOf 群会话 id：确定性推导（gs-<groupID>），重启后无需内存态；群不存在报错。
 func (c *Coordinator) SessionOf(_ context.Context, groupID string) (string, error) {
 	c.mu.Lock()
-	rt, ok := c.runs[groupID]
+	_, ok := c.runs[groupID]
 	c.mu.Unlock()
 	if !ok {
-		return "", nil
+		return "", fmt.Errorf("%w: group %s", repo.ErrNotFound, groupID)
 	}
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	return rt.sessID, nil
+	return "gs-" + groupID, nil
 }
 
 // State 返回群当前运行态快照（API 详情用）。
