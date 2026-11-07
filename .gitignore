@@ -42,3 +42,4 @@ Thumbs.db
 
 # ZCode 会话工作区
 .zcode/
+__pycache__/
