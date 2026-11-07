@@ -195,13 +195,17 @@ async function remove(): Promise<void> {
                 </div>
                 <div>
                   <label class="f-label">可流式</label>
-                  <select v-model="capCanStream" class="f-input">
+                  <!-- 能力只开不关（后端 MergeDefaults 只合并 non-zero）：已开启的流式锁死，防静默无效修改 -->
+                  <select v-model="capCanStream" class="f-input" :disabled="agent.capabilities.can_stream">
                     <option :value="true">是</option>
                     <option :value="false">否</option>
                   </select>
                 </div>
               </div>
-              <div class="f-hint">变更保存前自动做连通性测试；探活失败默认拒绝（坏配置不生效）。</div>
+              <div class="f-hint">
+                变更保存前自动做连通性测试；探活失败默认拒绝（坏配置不生效）。
+                能力只能开启或提升、不能关闭：已开启的「可流式」与降回 0 的插话级别会被后端忽略，关闭需软删后重建。
+              </div>
 
               <div style="display: flex; align-items: center; gap: 14px; margin-top: 18px">
                 <button class="btn btn-primary" type="submit" :disabled="saving">

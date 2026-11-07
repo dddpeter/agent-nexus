@@ -51,6 +51,8 @@ func (f *Factory) ConfigSchema() adapter.Schema {
 		{Name: "reply", Label: "固定回复内容", Type: adapter.FieldString, Help: "mode=fixed 时的回复文本"},
 		{Name: "delay_ms", Label: "延迟毫秒数", Type: adapter.FieldInt, Default: 0, Help: "mode=delay/stream 时的延迟"},
 		{Name: "stream_chunks", Label: "流式分片数", Type: adapter.FieldInt, Default: 3, Help: "mode=stream 时 delta 分片数量"},
+		{Name: "stream_interval_ms", Label: "分片间隔毫秒", Type: adapter.FieldInt, Default: 0,
+			Help: "mode=stream 时相邻 delta 的间隔（0=连发）；>0 模拟真实打字机节奏"},
 		{Name: "api_key", Label: "API Key", Type: adapter.FieldString, Secret: true, Help: "密钥字段（脱敏回显测试用，功能上未使用）"},
 		{Name: "stateless", Label: "无会话机制", Type: adapter.FieldBool, Default: false,
 			Help: "模拟无会话机制 agent：忽略 session id，平台须注入上下文摘要"},
@@ -207,6 +209,11 @@ func (a *Adapter) Stream(ctx context.Context, sid adapter.SessionID, msg adapter
 			case <-stop:
 				return
 			default:
+			}
+			if iv := adapter.GetInt(a.cfg, "stream_interval_ms", 0); iv > 0 {
+				if err := sleepRespectCtx(ctx, time.Duration(iv)*time.Millisecond); err != nil {
+					return
+				}
 			}
 			end := i + per
 			if end > len(runes) {

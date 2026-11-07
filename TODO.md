@@ -4,10 +4,12 @@
 
 ## 文档问题 / 设计决策待定
 
-1. **disable/enable 状态无法持久化**
-   - 现象：`agents.status` 枚举（technical-design §3 注释）为 `online|offline|busy|removed`，无 `disabled` 值。
-   - 绕行：停用状态保存在 registry 内存（`agentRT.disabled`），重启后丢失并自动重新探活恢复。
-   - 建议：DDL 增加 `agents.disabled INTEGER DEFAULT 0` 列（或扩展 status 枚举），需文档 owner 决定。
+1. **disable/enable 状态无法持久化** ✅ 已解决（2026-11-07）
+   - 原现象：停用状态仅存 registry 内存，重启后丢失并自动重新探活恢复。
+   - 方案：迁移 00002 增加 `agents.disabled INTEGER NOT NULL DEFAULT 0` 列（不扩展 status 枚举，
+     disabled 与探活状态机正交）；Disable/Enable 落库，`LoadPersisted` 启动恢复（停用 agent 不探活
+     直接 offline，Enable 时主动 probe）；心跳对停用 agent 跳过探活避免状态抖动。
+   - 回归：`TestDisablePersistenceAcrossRestart`（registry 层 kill -9 语义重启恢复）。
 
 2. **Web UI 与 Bearer 鉴权的组合方式** ✅ 已解决（2026-11-06）
    - 原现象：浏览器无法带 `Authorization: Bearer` 头，配置 token 后页面不可用。
@@ -31,7 +33,10 @@
 
 9. **U-F6-05/06**：群状态快照恢复（依赖 M3 群协调器壳）与 `VACUUM INTO` 定时备份（F6.2 备份策略）未实现。
 10. **U-F5-05 CLI REPL**（`nexus chat`）：任务 7 范围限定 serve/list/register；REPL 属 FR5.4 完整形态。
-11. **FR2.5 会话闲置 24h 自动回收**：repo 已支持 `closed_at`，后台回收循环未做。
+11. **FR2.5 会话闲置 24h 自动回收** ✅ 已实现（2026-11-07）：`internal/session.Janitor` 周期扫描
+    （`server.session_sweep_interval` 默认 30min），闲置阈值 `server.session_idle_timeout` 默认 24h
+    （显式负值禁用）；闲置 = 末条消息早于阈值（无消息回退 created_at）；归档时追加系统消息说明原因。
+    回归：`TestJanitorSweep` + `TestSessionCloseIdle`（memory/sqlite 双实现）。
 12. **仲裁器状态快照 30s 异步落库**（F3.3）：`ApplyDecision` 纯转移已就绪，群状态壳（M3）负责落库。
 13. **serve 静态 agents 的 upsert 语义**：同名 agent 走 `UpdateConfig(force=false)`，新配置探活失败时跳过更新并记日志（保留旧配置运行）。
 
