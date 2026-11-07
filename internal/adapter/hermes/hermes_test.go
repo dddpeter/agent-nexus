@@ -1,9 +1,14 @@
 package hermes_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net"
+	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -161,6 +166,156 @@ loop:
 	assert.GreaterOrEqual(t, deltas, 2)
 	assert.Equal(t, 1, finals)
 	assert.Zero(t, errs)
+}
+
+// strictStreamGateway 会话严格校验的流式网关 stub：/api/sessions 建的会话记入 known，
+// /v1/chat/completions 对未知 X-Hermes-Session-Id 返回 404（真实网关语义，echodhttp mock 不校验）。
+type strictStreamGateway struct {
+	inner   http.Handler
+	mu      sync.Mutex
+	known   map[string]bool
+	creates int32
+	chatIDs []string
+	chats   int32
+}
+
+func newStrictStreamGateway(t *testing.T) (*httptest.Server, *strictStreamGateway) {
+	t.Helper()
+	g := &strictStreamGateway{inner: echodhttp.NewMux(echodhttp.Config{Mode: "stream", Chunks: 2}), known: map[string]bool{}}
+	srv := httptest.NewServer(g)
+	t.Cleanup(srv.Close)
+	return srv, g
+}
+
+type teeWriter struct {
+	http.ResponseWriter
+	buf bytes.Buffer
+}
+
+func (t *teeWriter) Write(p []byte) (int, error) {
+	t.buf.Write(p)
+	return t.ResponseWriter.Write(p)
+}
+
+func (g *strictStreamGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/api/sessions":
+		atomic.AddInt32(&g.creates, 1)
+		tw := &teeWriter{ResponseWriter: w}
+		g.inner.ServeHTTP(tw, r)
+		var resp struct {
+			Session struct {
+				ID string `json:"id"`
+			} `json:"session"`
+		}
+		if json.Unmarshal(tw.buf.Bytes(), &resp) == nil && resp.Session.ID != "" {
+			g.mu.Lock()
+			g.known[resp.Session.ID] = true
+			g.mu.Unlock()
+		}
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions":
+		atomic.AddInt32(&g.chats, 1)
+		sid := r.Header.Get("X-Hermes-Session-Id")
+		g.mu.Lock()
+		g.chatIDs = append(g.chatIDs, sid)
+		ok := g.known[sid]
+		g.mu.Unlock()
+		if !ok {
+			writeErrJSON(w, sid)
+			return
+		}
+		g.inner.ServeHTTP(w, r)
+	default:
+		g.inner.ServeHTTP(w, r)
+	}
+}
+
+func writeErrJSON(w http.ResponseWriter, sid string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]string{"message": "session " + sid + " not found", "code": "session_not_found"},
+	})
+}
+
+// Stream 续话绑定（2026-11-07 评审修复回归）：同平台 sid 连续两次 Stream 必须复用同一
+// 网关会话——修复前每次 Stream 都懒建新会话，agent 侧多轮上下文全丢。
+func TestStreamBindsSessionAcrossCalls(t *testing.T) {
+	ctx := context.Background()
+	srv, g := newStrictStreamGateway(t)
+	ad, err := hermes.NewFactory().New(map[string]any{"base_url": srv.URL})
+	require.NoError(t, err)
+
+	drain := func(ch <-chan adapter.StreamEvent) {
+		for range ch {
+		}
+	}
+	ch, cancel, err := ad.Stream(ctx, "platform-sid-1", adapter.Message{Content: "第一轮"})
+	require.NoError(t, err)
+	drain(ch)
+	cancel()
+
+	ch, cancel, err = ad.Stream(ctx, "platform-sid-1", adapter.Message{Content: "第二轮"})
+	require.NoError(t, err)
+	drain(ch)
+	cancel()
+
+	assert.EqualValues(t, 1, atomic.LoadInt32(&g.creates),
+		"同平台 sid 两次 Stream 只应懒建一次网关会话（修复前每次都新建）")
+	assert.EqualValues(t, 2, atomic.LoadInt32(&g.chats))
+	g.mu.Lock()
+	require.Len(t, g.chatIDs, 2)
+	ids := append([]string(nil), g.chatIDs...)
+	g.mu.Unlock()
+	assert.Equal(t, ids[0], ids[1],
+		"两次流式请求应携带同一 X-Hermes-Session-Id（续话依据）")
+	assert.NotEqual(t, "platform-sid-1", ids[0], "应绑定懒建的网关会话而非平台 sid")
+}
+
+// Stream 绑定自愈：绑定的网关会话丢失（404）→ 解绑并明确报错，下次 Stream 重新懒建恢复。
+func TestStreamUnbindsOnSessionLost(t *testing.T) {
+	ctx := context.Background()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+
+	gA := &strictStreamGateway{inner: echodhttp.NewMux(echodhttp.Config{Mode: "stream", Chunks: 1}), known: map[string]bool{}}
+	srvA := httptest.NewUnstartedServer(gA)
+	srvA.Listener = ln
+	srvA.Start()
+	ad, err := hermes.NewFactory().New(map[string]any{"base_url": "http://" + addr})
+	require.NoError(t, err)
+
+	drain := func(ch <-chan adapter.StreamEvent) {
+		for range ch {
+		}
+	}
+	ch, cancel, err := ad.Stream(ctx, "platform-sid-9", adapter.Message{Content: "before"})
+	require.NoError(t, err)
+	drain(ch)
+	cancel()
+
+	srvA.Close()
+	time.Sleep(50 * time.Millisecond)
+	ln2, err := net.Listen("tcp", addr)
+	require.NoError(t, err)
+	gB := &strictStreamGateway{inner: echodhttp.NewMux(echodhttp.Config{Mode: "stream", Chunks: 1}), known: map[string]bool{}}
+	srvB := httptest.NewUnstartedServer(gB)
+	srvB.Listener = ln2
+	srvB.Start()
+	t.Cleanup(srvB.Close)
+
+	// 网关重启：旧绑定 404 → 本次报 ErrSessionLost；解绑后下次 Stream 懒建新会话恢复
+	_, cancel2, err := ad.Stream(ctx, "platform-sid-9", adapter.Message{Content: "after"})
+	if err == nil {
+		cancel2()
+	}
+	require.ErrorIs(t, err, adapter.ErrSessionLost, "丢失的网关会话应明确报错")
+
+	ch, cancel3, err := ad.Stream(ctx, "platform-sid-9", adapter.Message{Content: "recovered"})
+	require.NoError(t, err, "解绑后应重新懒建自愈")
+	drain(ch)
+	cancel3()
 }
 
 // 延迟网关 + 超时 ctx → 错误而非无限等（故障注入矩阵：慢响应触发调用超时）。

@@ -63,6 +63,7 @@ func (f *Factory) New(cfg adapter.Config) (adapter.AgentAdapter, error) {
 		apiKey:  adapter.GetStr(normalized, "api_key", ""),
 		model:   adapter.GetStr(normalized, "model", "hermes-agent"),
 		timeout: adapter.GetDuration(normalized, "timeout", 5*time.Minute),
+		binds:   make(map[adapter.SessionID]string),
 		// 直连：不继承系统代理（纳管对象通常是本机/内网服务，走代理会导致探活结果失真）
 		client: &http.Client{Transport: &http.Transport{Proxy: nil}},
 	}, nil
@@ -78,7 +79,8 @@ type Adapter struct {
 	timeout time.Duration
 	client  *http.Client
 	mu      sync.Mutex
-	gwSess  map[string]bool // 已知 gateway session id（懒建判定优化，非正确性依赖）
+	gwSess  map[string]bool              // 已知 gateway session id（懒建判定优化，非正确性依赖）
+	binds   map[adapter.SessionID]string // 平台 sid -> gateway session id（流式续话；流式路径无 SessionRef 回填通道）
 }
 
 var _ adapter.AgentAdapter = (*Adapter)(nil)
@@ -177,6 +179,27 @@ func (a *Adapter) known(sid string) bool {
 	return a.gwSess[sid]
 }
 
+// bindSession 记录平台 sid → gateway session 绑定；Stream 路径的续话依据
+// （StreamFinal 事件只带内容，无 SessionRef 回填通道，external_ref 拿不到流式会话）。
+func (a *Adapter) bindSession(sid adapter.SessionID, gwID string) {
+	a.mu.Lock()
+	a.binds[sid] = gwID
+	a.mu.Unlock()
+}
+
+func (a *Adapter) boundSession(sid adapter.SessionID) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.binds[sid]
+}
+
+// unbindSession 网关侧会话丢失（流式 404/410）时解除绑定，下次调用重新懒建（F2.4 自愈）。
+func (a *Adapter) unbindSession(sid adapter.SessionID) {
+	a.mu.Lock()
+	delete(a.binds, sid)
+	a.mu.Unlock()
+}
+
 // chatReq 真实网关 chat 门请求体（POST /api/sessions/{id}/chat）。
 type chatReq struct {
 	Message string `json:"message"`
@@ -259,15 +282,22 @@ func sessionLostErr(gwID string, resp *http.Response) error {
 
 // Stream POST /v1/chat/completions（OpenAI 兼容 SSE）+ X-Hermes-Session-Id 续话。
 // delta.content 渐进转译为 StreamDelta；[DONE]/finish_reason → StreamFinal（累计全量）。
+// 平台 sid 首次懒建网关会话并绑定复用——不绑定则同会话每条消息都开新网关会话，
+// agent 侧多轮上下文全丢（2026-11-07 评审修复：曾每次 Stream 都 CreateSession）。
 func (a *Adapter) Stream(ctx context.Context, sid adapter.SessionID, msg adapter.Message) (<-chan adapter.StreamEvent, func(), error) {
-	gwID := string(sid)
-	if !a.known(gwID) {
-		// 平台 sid / 重启后未知 sid：先懒建，避免流式路径拿不到可续话会话
-		fresh, err := a.CreateSession(ctx, adapter.SessionOpts{})
-		if err != nil {
-			return nil, nil, fmt.Errorf("hermes: lazy session create: %w", err)
+	gwID := a.boundSession(sid)
+	if gwID == "" {
+		if a.known(string(sid)) {
+			gwID = string(sid) // external_ref 已回填的网关会话直接复用
+		} else {
+			// 平台 sid / 重启后未知 sid：先懒建，避免流式路径拿不到可续话会话
+			fresh, err := a.CreateSession(ctx, adapter.SessionOpts{})
+			if err != nil {
+				return nil, nil, fmt.Errorf("hermes: lazy session create: %w", err)
+			}
+			gwID = string(fresh)
+			a.bindSession(sid, gwID)
 		}
-		gwID = string(fresh)
 	}
 
 	payload := map[string]any{
@@ -299,6 +329,7 @@ func (a *Adapter) Stream(ctx context.Context, sid adapter.SessionID, msg adapter
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+			a.unbindSession(sid) // 绑定的网关会话已丢失，下次懒建自愈
 			scancel()
 			return nil, nil, fmt.Errorf("%w: gateway session %s expired", adapter.ErrSessionLost, gwID)
 		}
