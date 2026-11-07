@@ -25,6 +25,7 @@ type sqliteStore struct {
 	sessions *sqliteSessionRepo
 	messages *sqliteMessageRepo
 	groups   *sqliteGroupRepo
+	cronJobs *sqliteCronJobRepo
 	tasks    *sqliteTaskRepo
 	events   *sqliteEventRepo
 }
@@ -60,6 +61,7 @@ func OpenSQLite(ctx context.Context, dsn string) (Store, error) {
 	s.sessions = &sqliteSessionRepo{db}
 	s.messages = &sqliteMessageRepo{db}
 	s.groups = &sqliteGroupRepo{db}
+	s.cronJobs = &sqliteCronJobRepo{db}
 	s.tasks = &sqliteTaskRepo{db}
 	s.events = &sqliteEventRepo{db}
 	return s, nil
@@ -82,6 +84,7 @@ func (s *sqliteStore) Sessions() SessionRepo { return s.sessions }
 func (s *sqliteStore) Messages() MessageRepo { return s.messages }
 func (s *sqliteStore) Groups() GroupRepo     { return s.groups }
 func (s *sqliteStore) Tasks() TaskRepo       { return s.tasks }
+func (s *sqliteStore) CronJobs() CronJobRepo { return s.cronJobs }
 func (s *sqliteStore) Events() EventRepo     { return s.events }
 func (s *sqliteStore) Close() error          { return s.db.Close() }
 
@@ -657,3 +660,103 @@ func (r *sqliteEventRepo) EventsAfter(ctx context.Context, afterSeq int64, limit
 	}
 	return out, rows.Err()
 }
+
+// ---------- cron jobs ----------
+
+type sqliteCronJobRepo struct{ db *sql.DB }
+
+const cronJobCols = "id, name, cron_expr, target_json, enabled, last_run_at, last_status, last_task_id, created_at"
+
+func (r *sqliteCronJobRepo) Create(ctx context.Context, j CronJob) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO cron_jobs (id, name, cron_expr, target_json, enabled, created_at) VALUES (?,?,?,?,?,?)`,
+		j.ID, j.Name, j.CronExpr, j.TargetJSON, boolInt(j.Enabled), fmtTime(j.CreatedAt))
+	if err != nil {
+		if isUniqueViolation(err, "cron_jobs.name") {
+			return fmt.Errorf("%w: %q", ErrDuplicateName, j.Name)
+		}
+		return fmt.Errorf("repo: create cron job: %w", err)
+	}
+	return nil
+}
+
+func (r *sqliteCronJobRepo) scan(row interface{ Scan(...any) error }) (CronJob, error) {
+	var j CronJob
+	var lastRun, lastStatus, lastTask sql.NullString
+	var created string
+	var enabled int
+	if err := row.Scan(&j.ID, &j.Name, &j.CronExpr, &j.TargetJSON, &enabled, &lastRun, &lastStatus, &lastTask, &created); err != nil {
+		return CronJob{}, err
+	}
+	j.Enabled = enabled != 0
+	j.LastStatus = lastStatus.String
+	j.LastTaskID = lastTask.String
+	if lastRun.Valid {
+		t, err := parseTime(lastRun.String)
+		if err != nil {
+			return CronJob{}, err
+		}
+		j.LastRunAt = &t
+	}
+	t, err := parseTime(created)
+	if err != nil {
+		return CronJob{}, err
+	}
+	j.CreatedAt = t
+	return j, nil
+}
+
+func (r *sqliteCronJobRepo) Get(ctx context.Context, id string) (CronJob, error) {
+	j, err := r.scan(r.db.QueryRowContext(ctx, `SELECT `+cronJobCols+` FROM cron_jobs WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return CronJob{}, fmt.Errorf("%w: cron job %s", ErrNotFound, id)
+	}
+	return j, err
+}
+
+func (r *sqliteCronJobRepo) GetByName(ctx context.Context, name string) (CronJob, error) {
+	j, err := r.scan(r.db.QueryRowContext(ctx, `SELECT `+cronJobCols+` FROM cron_jobs WHERE name = ?`, name))
+	if errors.Is(err, sql.ErrNoRows) {
+		return CronJob{}, fmt.Errorf("%w: cron job %q", ErrNotFound, name)
+	}
+	return j, err
+}
+
+func (r *sqliteCronJobRepo) Update(ctx context.Context, j CronJob) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE cron_jobs SET name=?, cron_expr=?, target_json=?, enabled=?, last_run_at=?, last_status=?, last_task_id=? WHERE id=?`,
+		j.Name, j.CronExpr, j.TargetJSON, boolInt(j.Enabled), fmtTimePtr(j.LastRunAt),
+		nullStr(strPtr2(j.LastStatus)), nullStr(strPtr2(j.LastTaskID)), j.ID)
+	if err != nil {
+		return fmt.Errorf("repo: update cron job: %w", err)
+	}
+	return requireUpdated(res, "cron job", j.ID)
+}
+
+func (r *sqliteCronJobRepo) Delete(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM cron_jobs WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("repo: delete cron job: %w", err)
+	}
+	return requireUpdated(res, "cron job", id)
+}
+
+func (r *sqliteCronJobRepo) List(ctx context.Context) ([]CronJob, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT `+cronJobCols+` FROM cron_jobs ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("repo: list cron jobs: %w", err)
+	}
+	defer rows.Close()
+	var out []CronJob
+	for rows.Next() {
+		j, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// strPtr2 值转指针（cron 状态列 null 处理用）。
+func strPtr2(s string) *string { return &s }

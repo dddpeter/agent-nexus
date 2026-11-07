@@ -19,6 +19,7 @@ type memStore struct {
 	messages    []Message
 	groups      map[string]Group
 	tasks       map[string]Task
+	cronJobs    map[string]CronJob
 	events      []bus.Event
 }
 
@@ -30,6 +31,7 @@ func NewMemoryStore() Store {
 		sessions:    make(map[string]Session),
 		groups:      make(map[string]Group),
 		tasks:       make(map[string]Task),
+		cronJobs:    make(map[string]CronJob),
 	}
 	return m
 }
@@ -39,6 +41,7 @@ func (m *memStore) Sessions() SessionRepo { return (*memSessionRepo)(m) }
 func (m *memStore) Messages() MessageRepo { return (*memMessageRepo)(m) }
 func (m *memStore) Groups() GroupRepo     { return (*memGroupRepo)(m) }
 func (m *memStore) Tasks() TaskRepo       { return (*memTaskRepo)(m) }
+func (m *memStore) CronJobs() CronJobRepo { return (*memCronJobRepo)(m) }
 func (m *memStore) Events() EventRepo     { return (*memEventRepo)(m) }
 func (m *memStore) Close() error          { return nil }
 
@@ -372,5 +375,73 @@ func (m *memEventRepo) EventsAfter(_ context.Context, afterSeq int64, limit int)
 			}
 		}
 	}
+	return out, nil
+}
+
+// ---------- cron jobs ----------
+
+type memCronJobRepo memStore
+
+func (m *memCronJobRepo) Create(_ context.Context, j CronJob) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.cronJobs {
+		if existing.Name == j.Name {
+			return fmt.Errorf("%w: %q", ErrDuplicateName, j.Name)
+		}
+	}
+	m.cronJobs[j.ID] = j
+	return nil
+}
+
+func (m *memCronJobRepo) Get(_ context.Context, id string) (CronJob, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	j, ok := m.cronJobs[id]
+	if !ok {
+		return CronJob{}, fmt.Errorf("%w: cron job %s", ErrNotFound, id)
+	}
+	return j, nil
+}
+
+func (m *memCronJobRepo) GetByName(_ context.Context, name string) (CronJob, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, j := range m.cronJobs {
+		if j.Name == name {
+			return j, nil
+		}
+	}
+	return CronJob{}, fmt.Errorf("%w: cron job %q", ErrNotFound, name)
+}
+
+func (m *memCronJobRepo) Update(_ context.Context, j CronJob) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.cronJobs[j.ID]; !ok {
+		return fmt.Errorf("%w: cron job %s", ErrNotFound, j.ID)
+	}
+	m.cronJobs[j.ID] = j
+	return nil
+}
+
+func (m *memCronJobRepo) Delete(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.cronJobs[id]; !ok {
+		return fmt.Errorf("%w: cron job %s", ErrNotFound, id)
+	}
+	delete(m.cronJobs, id)
+	return nil
+}
+
+func (m *memCronJobRepo) List(_ context.Context) ([]CronJob, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []CronJob
+	for _, j := range m.cronJobs {
+		out = append(out, j)
+	}
+	sort.Slice(out, func(i, k int) bool { return out[i].CreatedAt.After(out[k].CreatedAt) })
 	return out, nil
 }

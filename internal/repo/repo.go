@@ -167,6 +167,30 @@ type TaskRepo interface {
 	List(ctx context.Context) ([]Task, error)
 }
 
+// CronJob 是 cron_jobs 表的存储映照（F4.3 定时任务）。
+// TargetJSON 形状由 orchestr 层解释：{"type":"chain",...} | {"type":"agent",...}（repo 不感知语义）。
+type CronJob struct {
+	ID         string
+	Name       string
+	CronExpr   string
+	TargetJSON string
+	Enabled    bool
+	LastRunAt  *time.Time
+	LastStatus string // ok|skipped_offline|failed|""（未触发过）
+	LastTaskID string
+	CreatedAt  time.Time
+}
+
+// CronJobRepo cron_jobs 聚合。
+type CronJobRepo interface {
+	Create(ctx context.Context, j CronJob) error
+	Get(ctx context.Context, id string) (CronJob, error)
+	GetByName(ctx context.Context, name string) (CronJob, error)
+	Update(ctx context.Context, j CronJob) error
+	Delete(ctx context.Context, id string) error
+	List(ctx context.Context) ([]CronJob, error)
+}
+
 // EventRepo event_log 聚合；实现同时满足 bus.Sink（AppendEvents/MaxEventSeq）。
 type EventRepo interface {
 	// AppendEvents 批量追加；Event.Seq 显式写入（bus 在发布时已分配，保证与内存一致）。
@@ -183,6 +207,7 @@ type Store interface {
 	Messages() MessageRepo
 	Groups() GroupRepo
 	Tasks() TaskRepo
+	CronJobs() CronJobRepo
 	Events() EventRepo
 	Close() error
 }
