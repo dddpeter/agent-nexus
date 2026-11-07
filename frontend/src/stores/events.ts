@@ -9,9 +9,14 @@ const EVENT_TYPES = ['agent.status', 'msg.human', 'msg.agent', 'msg.system', 'ta
 
 export type EventType = (typeof EVENT_TYPES)[number]
 
+/** SSE 帧元信息：seq 来自 writeSSE 的 id 字段（= bus.Event.Seq）。 */
+export interface EventMeta {
+  seq: number
+}
+
 // EventSource 不能放 pinia state（会被 reactive 代理破坏），放模块级变量。
 let es: EventSource | null = null
-const listeners = new Map<EventType, Set<(payload: any) => void>>()
+const listeners = new Map<EventType, Set<(payload: any, meta: EventMeta) => void>>()
 
 export const useEventStream = defineStore('eventStream', () => {
   const connected = ref(false)
@@ -31,18 +36,19 @@ export const useEventStream = defineStore('eventStream', () => {
         try {
           payload = JSON.parse(e.data)
         } catch { /* 心跳类空数据忽略 */ }
-        listeners.get(type)?.forEach((fn) => fn(payload))
+        const meta: EventMeta = { seq: Number(e.lastEventId) || 0 }
+        listeners.get(type)?.forEach((fn) => fn(payload, meta))
       })
     }
   }
 
-  /** 订阅；返回退订函数。 */
-  function on<T = unknown>(type: EventType, fn: (payload: T) => void): () => void {
+  /** 订阅；返回退订函数。meta 携带事件 seq（可选参数，老订阅者不受影响）。 */
+  function on<T = unknown>(type: EventType, fn: (payload: T, meta?: EventMeta) => void): () => void {
     ensure()
     if (!listeners.has(type)) listeners.set(type, new Set())
-    listeners.get(type)!.add(fn)
+    listeners.get(type)!.add(fn as (payload: any, meta: EventMeta) => void)
     return () => {
-      listeners.get(type)?.delete(fn)
+      listeners.get(type)?.delete(fn as (payload: any, meta: EventMeta) => void)
     }
   }
 

@@ -22,6 +22,9 @@ func (s *Server) mountAPI(r chi.Router) {
 	// SSE 全局流（断线 Last-Event-ID 补偿重放）
 	r.Get("/stream", s.handleGlobalStream)
 
+	// 事件检索视图（可观测性）：最近事件 / 按类型过滤
+	r.Get("/events", s.handleListEvents)
+
 	// 私聊会话（任务 12-14）
 	if s.deps.Router != nil {
 		r.Post("/sessions", s.handleCreateSession)

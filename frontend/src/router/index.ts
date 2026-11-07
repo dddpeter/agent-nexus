@@ -5,6 +5,7 @@ import AgentListPage from '../pages/AgentListPage.vue'
 import WizardPage from '../pages/WizardPage.vue'
 import AgentDetailPage from '../pages/AgentDetailPage.vue'
 import ChatPage from '../pages/ChatPage.vue'
+import EventsPage from '../pages/EventsPage.vue'
 import LoginPage from '../pages/LoginPage.vue'
 
 const router = createRouter({
@@ -14,6 +15,7 @@ const router = createRouter({
     { path: '/agents/new', name: 'wizard', component: WizardPage },
     { path: '/agents/:id', name: 'agent-detail', component: AgentDetailPage },
     { path: '/chat', name: 'chat', component: ChatPage },
+    { path: '/events', name: 'events', component: EventsPage },
     { path: '/login', name: 'login', component: LoginPage, meta: { bare: true } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
