@@ -320,12 +320,16 @@ func (r *Impl) LoadPersisted(ctx context.Context) error {
 			r.log.Error("persisted agent capabilities corrupted", "agent", rec.Name, "err", err)
 			continue
 		}
-		// 立即探活刷新状态（重启后不信任库内旧状态）
+		// 立即探活刷新状态（重启后不信任库内旧状态）；停用 agent 不探活，保持 offline
 		status := repo.StatusOnline
-		pctx, cancel := context.WithTimeout(ctx, r.opts.ProbeTimeout)
-		probeErr := ad.HealthCheck(pctx)
-		cancel()
-		if probeErr != nil {
+		if !rec.Disabled {
+			pctx, cancel := context.WithTimeout(ctx, r.opts.ProbeTimeout)
+			probeErr := ad.HealthCheck(pctx)
+			cancel()
+			if probeErr != nil {
+				status = repo.StatusOffline
+			}
+		} else {
 			status = repo.StatusOffline
 		}
 		now := r.opts.Now()
@@ -340,6 +344,7 @@ func (r *Impl) LoadPersisted(ctx context.Context) error {
 				Config: cfg, Capabilities: caps, Status: status, LastHeartbeatAt: &now,
 			},
 			adapter:  ad,
+			disabled: rec.Disabled,
 			sem:      semaphore.NewWeighted(int64(caps.MaxConcurrency)),
 			stopBeat: make(chan struct{}),
 		}
@@ -347,7 +352,7 @@ func (r *Impl) LoadPersisted(ctx context.Context) error {
 		r.agents[rec.ID] = rt
 		r.mu.Unlock()
 		r.startHeartbeat(rt)
-		r.log.Info("agent restored", "agent_id", rec.ID, "name", rec.Name, "status", status)
+		r.log.Info("agent restored", "agent_id", rec.ID, "name", rec.Name, "status", status, "disabled", rec.Disabled)
 	}
 	return nil
 }
@@ -406,6 +411,7 @@ func (r *Impl) List(ctx context.Context, f StatusFilter) ([]Agent, error) {
 				ID: rec.ID, Name: rec.Name, Adapter: rec.Adapter,
 				Config: cfg, Capabilities: caps, Status: rec.Status,
 				LastHeartbeatAt: rec.LastHeartbeatAt,
+				Disabled:        rec.Disabled,
 			})
 			continue
 		}
@@ -477,6 +483,15 @@ func (r *Impl) Heartbeat(ctx context.Context, agentID string) error {
 
 // probe 执行一次探活并推进状态机（F1.4：连续 N 败 → offline；恢复 → online）。
 func (r *Impl) probe(ctx context.Context, rt *agentRT) {
+	rt.mu.Lock()
+	disabled := rt.disabled
+	rt.mu.Unlock()
+	if disabled {
+		// 停用期间不探活：避免心跳把停用 agent 翻回 online（Acquire 仍被 disabled 闸拦，
+		// 但状态抖动会误导 UI）；Enable 路径会主动 probe 恢复真实状态。
+		return
+	}
+
 	pctx, cancel := context.WithTimeout(ctx, r.opts.ProbeTimeout)
 	err := rt.adapter.HealthCheck(pctx)
 	cancel()
@@ -691,8 +706,27 @@ func (r *Impl) setDisabled(agentID string, disabled bool) error {
 		reason = "manual disable"
 	}
 	r.log.Info("agent "+verb, "agent_id", agentID, "name", rt.agent.Name)
+	// 停用状态持久化（TODO#1）：重启后 LoadPersisted 恢复，不再丢失
+	if err := r.persistDisabled(context.Background(), agentID, disabled); err != nil {
+		r.log.Error("persist disabled flag failed", "agent_id", agentID, "err", err)
+	}
 	r.publishStatus(agentID, rt.agent.Name, "", rt.agent.Status, reason)
 	return nil
+}
+
+// persistDisabled 与 probe 的 Get+Update 同构：只改 disabled 列语义，避免整行覆盖写。
+// disable 同时把库内 status 置 offline（停用期间不再探活，无人顺带持久化状态）；
+// enable 不动 status，紧随其后的 Enable probe 会写入真实状态。
+func (r *Impl) persistDisabled(ctx context.Context, agentID string, disabled bool) error {
+	rec, err := r.store.Agents().Get(ctx, agentID)
+	if err != nil {
+		return err
+	}
+	rec.Disabled = disabled
+	if disabled {
+		rec.Status = repo.StatusOffline
+	}
+	return r.store.Agents().Update(ctx, rec)
 }
 
 // Unregister 软删（status=removed，FR1.6）：历史会话/任务保留可查。

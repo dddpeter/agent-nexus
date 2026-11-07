@@ -112,13 +112,13 @@ func parseTimePtr(ns sql.NullString) (*time.Time, error) {
 
 type sqliteAgentRepo struct{ db *sql.DB }
 
-const agentCols = "id, name, adapter, config_json, capabilities_json, status, last_heartbeat_at"
+const agentCols = "id, name, adapter, config_json, capabilities_json, status, last_heartbeat_at, disabled"
 
 func (r *sqliteAgentRepo) Create(ctx context.Context, a Agent) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO agents (id, name, adapter, config_json, capabilities_json, status, last_heartbeat_at)
-		 VALUES (?,?,?,?,?,?,?)`,
-		a.ID, a.Name, a.Adapter, a.ConfigJSON, a.CapabilitiesJSON, a.Status, fmtTimePtr(a.LastHeartbeatAt))
+		`INSERT INTO agents (id, name, adapter, config_json, capabilities_json, status, last_heartbeat_at, disabled)
+		 VALUES (?,?,?,?,?,?,?,?)`,
+		a.ID, a.Name, a.Adapter, a.ConfigJSON, a.CapabilitiesJSON, a.Status, fmtTimePtr(a.LastHeartbeatAt), boolInt(a.Disabled))
 	if err != nil {
 		if isUniqueViolation(err, "agents.name") {
 			return fmt.Errorf("%w: %q", ErrDuplicateName, a.Name)
@@ -131,9 +131,11 @@ func (r *sqliteAgentRepo) Create(ctx context.Context, a Agent) error {
 func (r *sqliteAgentRepo) scan(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var hb sql.NullString
-	if err := row.Scan(&a.ID, &a.Name, &a.Adapter, &a.ConfigJSON, &a.CapabilitiesJSON, &a.Status, &hb); err != nil {
+	var disabled int
+	if err := row.Scan(&a.ID, &a.Name, &a.Adapter, &a.ConfigJSON, &a.CapabilitiesJSON, &a.Status, &hb, &disabled); err != nil {
 		return Agent{}, err
 	}
+	a.Disabled = disabled != 0
 	var err error
 	if a.LastHeartbeatAt, err = parseTimePtr(hb); err != nil {
 		return Agent{}, err
@@ -193,13 +195,21 @@ func (r *sqliteAgentRepo) List(ctx context.Context, f AgentFilter) ([]Agent, err
 
 func (r *sqliteAgentRepo) Update(ctx context.Context, a Agent) error {
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE agents SET adapter=?, config_json=?, capabilities_json=?, status=?, last_heartbeat_at=?
+		`UPDATE agents SET adapter=?, config_json=?, capabilities_json=?, status=?, last_heartbeat_at=?, disabled=?
 		 WHERE id=?`,
-		a.Adapter, a.ConfigJSON, a.CapabilitiesJSON, a.Status, fmtTimePtr(a.LastHeartbeatAt), a.ID)
+		a.Adapter, a.ConfigJSON, a.CapabilitiesJSON, a.Status, fmtTimePtr(a.LastHeartbeatAt), boolInt(a.Disabled), a.ID)
 	if err != nil {
 		return fmt.Errorf("repo: update agent: %w", err)
 	}
 	return requireUpdated(res, "agent", a.ID)
+}
+
+// boolInt SQLite 无原生布尔，DDL 用 INTEGER 0/1。
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func requireUpdated(res sql.Result, what, id string) error {
@@ -327,6 +337,39 @@ func (r *sqliteSessionRepo) ListByAgent(ctx context.Context, agentID string) ([]
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// CloseIdleBefore 闲置回收（FR2.5）：最后活动 = 末条消息 created_at（无消息回退会话 created_at）。
+func (r *sqliteSessionRepo) CloseIdleBefore(ctx context.Context, idleBefore, closedAt time.Time) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT s.id FROM sessions s
+		 WHERE s.closed_at IS NULL
+		   AND COALESCE((SELECT MAX(m.created_at) FROM messages m WHERE m.session_id = s.id), s.created_at) < ?`,
+		fmtTime(idleBefore))
+	if err != nil {
+		return nil, fmt.Errorf("repo: find idle sessions: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("repo: scan idle session: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("repo: list idle sessions: %w", err)
+	}
+	for _, id := range ids {
+		// closed_at IS NULL 复核：并发下不重复归档
+		if _, err := r.db.ExecContext(ctx,
+			`UPDATE sessions SET closed_at = ? WHERE id = ? AND closed_at IS NULL`, fmtTime(closedAt), id); err != nil {
+			return ids, fmt.Errorf("repo: close idle session %s: %w", id, err)
+		}
+	}
+	return ids, nil
 }
 
 // ---------- messages ----------

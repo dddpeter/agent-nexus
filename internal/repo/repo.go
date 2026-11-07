@@ -48,6 +48,8 @@ type Agent struct {
 	CapabilitiesJSON string
 	Status           string
 	LastHeartbeatAt  *time.Time
+	// Disabled 手动停用标记（C-F1-05）：独立于探活 status 状态机，持久化避免重启丢失（TODO#1）。
+	Disabled bool
 }
 
 // Session 是 sessions 表的存储映照。
@@ -132,6 +134,9 @@ type SessionRepo interface {
 	ListByAgent(ctx context.Context, agentID string) ([]Session, error)
 	// ListRecent 最近创建的会话（聊天侧栏）。
 	ListRecent(ctx context.Context, limit int) ([]Session, error)
+	// CloseIdleBefore 关闭闲置会话（FR2.5）：未关闭且最后活动（末条消息时间，无消息则
+	// created_at）早于 idleBefore 的会话置 closed_at=closedAt；返回被关闭的会话 ID。
+	CloseIdleBefore(ctx context.Context, idleBefore, closedAt time.Time) ([]string, error)
 }
 
 // MessageRepo messages 聚合（异步写入，存档检索）。

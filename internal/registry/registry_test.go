@@ -413,6 +413,46 @@ func TestDisableEnable(t *testing.T) {
 	release()
 }
 
+// 停用状态持久化（TODO#1）：disable 落库 → 模拟重启 LoadPersisted → 仍停用且 Acquire 拒绝；
+// enable 后探活恢复 online。
+func TestDisablePersistenceAcrossRestart(t *testing.T) {
+	reg, store, _ := newTestRegistry(t)
+	ctx := context.Background()
+
+	agent, err := reg.Register(ctx, basicSpec())
+	require.NoError(t, err)
+	require.NoError(t, reg.Disable(agent.ID))
+
+	rec, err := store.Agents().Get(ctx, agent.ID)
+	require.NoError(t, err)
+	assert.True(t, rec.Disabled, "disable 应落库")
+
+	// 模拟重启：同一 store 上新建 registry 并恢复
+	reg2, err := registry.New(store, &captureBus{},
+		[]adapter.AdapterFactory{echo.NewFactory()},
+		registry.Options{HeartbeatInterval: time.Hour, Logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))})
+	require.NoError(t, err)
+	t.Cleanup(reg2.Close)
+	require.NoError(t, reg2.LoadPersisted(ctx))
+
+	got, err := reg2.Get(ctx, agent.ID)
+	require.NoError(t, err)
+	assert.True(t, got.Disabled, "重启后停用状态应恢复")
+	assert.Equal(t, repo.StatusOffline, got.Status, "停用 agent 恢复为 offline，不探活")
+
+	_, err = reg2.Acquire(ctx, agent.ID)
+	assert.ErrorIs(t, err, registry.ErrAgentDisabled, "重启后停用闸仍生效")
+
+	// enable → 探活 → online
+	require.NoError(t, reg2.Enable(ctx, agent.ID))
+	got, _ = reg2.Get(ctx, agent.ID)
+	assert.False(t, got.Disabled)
+	assert.Equal(t, repo.StatusOnline, got.Status)
+
+	rec, _ = store.Agents().Get(ctx, agent.ID)
+	assert.False(t, rec.Disabled, "enable 应落库清除停用标记")
+}
+
 // 连通性测试（C-F1-03 registry 层）：好配置 OK；坏配置返回明确错误详情。
 func TestTestConnection(t *testing.T) {
 	reg, _, _ := newTestRegistry(t)

@@ -170,6 +170,34 @@ func (m *memSessionRepo) ListByAgent(_ context.Context, agentID string) ([]Sessi
 	return out, nil
 }
 
+// CloseIdleBefore 闲置回收（FR2.5）；语义与 sqlite 实现一致。
+func (m *memSessionRepo) CloseIdleBefore(_ context.Context, idleBefore, closedAt time.Time) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lastActivity := make(map[string]time.Time)
+	for _, msg := range m.messages {
+		if msg.CreatedAt.After(lastActivity[msg.SessionID]) {
+			lastActivity[msg.SessionID] = msg.CreatedAt
+		}
+	}
+	var ids []string
+	for id, s := range m.sessions {
+		if s.ClosedAt != nil {
+			continue
+		}
+		last := s.CreatedAt
+		if a, ok := lastActivity[id]; ok && a.After(last) {
+			last = a
+		}
+		if last.Before(idleBefore) {
+			s.ClosedAt = &closedAt
+			m.sessions[id] = s
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
 // ---------- messages ----------
 
 type memMessageRepo memStore

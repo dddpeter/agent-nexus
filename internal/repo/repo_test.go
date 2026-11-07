@@ -122,6 +122,40 @@ func TestSessionRepo(t *testing.T) {
 	}
 }
 
+// CloseIdleBefore（FR2.5）：按最后活动（末条消息/created_at 回退）批量归档；已关闭不重复。
+func TestSessionCloseIdle(t *testing.T) {
+	for name, mk := range stores() {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			s := mk(t)
+			now := time.Now().Truncate(time.Second)
+
+			idle := repo.Session{ID: "s-idle", Kind: repo.KindPrivate, CreatedAt: now.Add(-48 * time.Hour)}
+			fresh := repo.Session{ID: "s-fresh", Kind: repo.KindPrivate, CreatedAt: now.Add(-1 * time.Hour)}
+			closed := now.Add(-48 * time.Hour)
+			already := repo.Session{ID: "s-closed", Kind: repo.KindPrivate, CreatedAt: closed, ClosedAt: &closed}
+			for _, sess := range []repo.Session{idle, fresh, already} {
+				require.NoError(t, s.Sessions().Create(ctx, sess))
+			}
+			// idle 的末条消息 30h 前；fresh 的消息 10min 前
+			require.NoError(t, s.Messages().Append(ctx, &repo.Message{
+				SessionID: "s-idle", SenderType: repo.SenderHuman, Content: "old", CreatedAt: now.Add(-30 * time.Hour)}))
+			require.NoError(t, s.Messages().Append(ctx, &repo.Message{
+				SessionID: "s-fresh", SenderType: repo.SenderHuman, Content: "new", CreatedAt: now.Add(-10 * time.Minute)}))
+
+			ids, err := s.Sessions().CloseIdleBefore(ctx, now.Add(-24*time.Hour), now)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, []string{"s-idle"}, ids)
+
+			got, err := s.Sessions().Get(ctx, "s-idle")
+			require.NoError(t, err)
+			require.NotNil(t, got.ClosedAt)
+			got, _ = s.Sessions().Get(ctx, "s-fresh")
+			assert.Nil(t, got.ClosedAt, "活跃会话不受影响")
+		})
+	}
+}
+
 func TestMessageRepo(t *testing.T) {
 	for name, mk := range stores() {
 		t.Run(name, func(t *testing.T) {
