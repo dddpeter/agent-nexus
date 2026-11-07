@@ -357,6 +357,15 @@ func (r *Impl) LoadPersisted(ctx context.Context) error {
 	return nil
 }
 
+// AgentName 群成员展示名解析（@ 令牌用注册名）。
+func (r *Impl) AgentName(ctx context.Context, agentID string) (string, error) {
+	a, err := r.Get(ctx, agentID)
+	if err != nil {
+		return "", err
+	}
+	return a.Name, nil
+}
+
 func (r *Impl) Get(ctx context.Context, agentID string) (Agent, error) {
 	r.mu.RLock()
 	rt, ok := r.agents[agentID]
