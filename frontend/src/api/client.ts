@@ -24,10 +24,15 @@ export function setUnauthorizedHandler(fn: UnauthorizedHandler): void {
   unauthorizedHandler = fn
 }
 
+/** 统一 401 处理：跳登录页。streamSend 等绕过 request() 的路径也复用。 */
+export function notifyUnauthorized(): void {
+  unauthorizedHandler?.()
+}
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { credentials: 'include', ...init })
   if (res.status === 401) {
-    unauthorizedHandler?.()
+    notifyUnauthorized()
     throw new ApiError(401, 'unauthorized', '登录已失效，请重新登录')
   }
   if (res.status === 204) return undefined as T

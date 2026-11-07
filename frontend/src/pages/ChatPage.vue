@@ -33,6 +33,8 @@ const streaming = ref(false)
 const streamingId = ref<number | null>(null) // 流式中乐观气泡 id（首帧 delta 前走 McBubble loading 态）
 
 const historyEl = ref<HTMLElement | null>(null)
+/** 打开/切换会话后的首次拉取强制吸底；此后仅在用户本就在底部时跟随。 */
+let jumpToBottom = true
 
 const offs: Array<() => void> = []
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -68,15 +70,26 @@ async function loadMessages(): Promise<void> {
     /* 会话可能刚被清理 */
   }
   await nextTick()
+  scrollToBottom(jumpToBottom)
+  jumpToBottom = false
+}
+
+/** 滚动跟随：仅在用户本就停留在底部附近时吸底，上翻阅读不被拽回。 */
+function scrollToBottom(force = false): void {
   const el = historyEl.value
-  if (el) el.scrollTop = el.scrollHeight
+  if (!el) return
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  if (force || nearBottom) el.scrollTop = el.scrollHeight
 }
 
 async function openSession(id: string): Promise<void> {
+  jumpToBottom = true
   try {
     session.value = await getSession(id)
-  } catch {
+  } catch (e) {
+    // 会话打开失败（限流 429/网络抖动）不得静默成空态：给出可感知的提示
     session.value = null
+    notifyError(`会话加载失败：${e instanceof Error ? e.message : String(e)}`)
     return
   }
   const aid = session.value?.agent_id ?? ''
@@ -143,18 +156,20 @@ onMounted(async () => {
   if (!agentsStore.loaded) void agentsStore.load()
   void loadSessions()
 
-  // SSE：本会话消息 → 重拉；任意会话消息 → 侧栏更新
+  // SSE：本会话消息 → 重拉；任意会话消息 → 侧栏更新。
+  // 流式进行中挂起历史重拉：后端在 delta 前就落库发布 msg.human，此时整表替换
+  // 会把乐观气泡（含流式占位）移出数组，delta 渐进渲染随之失效——对齐留到流结束。
   for (const t of ['msg.human', 'msg.agent', 'msg.system'] as const) {
     offs.push(
       events.on(t, (payload: { session_id?: string } | null) => {
-        if (payload?.session_id === session.value?.id) void loadMessages()
+        if (payload?.session_id === session.value?.id && !streaming.value) void loadMessages()
         void loadSessions()
       }),
     )
   }
   pollTimer = setInterval(() => {
     void loadSessions()
-    if (session.value) void loadMessages()
+    if (session.value && !streaming.value) void loadMessages()
   }, 30000)
 })
 
@@ -217,16 +232,14 @@ async function sendStream(content: string): Promise<void> {
   }
   streamingId.value = streamMsg.id
   messages.value = [...messages.value, optimistic, streamMsg]
-  void nextTick(() => {
-    const el = historyEl.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
+  void nextTick(() => scrollToBottom(true))
 
   try {
     await streamSend(session.value.id, content, (frame) => {
       if (frame.type === 'delta' || frame.type === 'final') {
         streamMsg.content += frame.data
         messages.value = [...messages.value] // 触发响应式
+        void nextTick(() => scrollToBottom())
       } else if (frame.type === 'error') {
         streamMsg.content += (streamMsg.content ? '\n' : '') + `[error] ${frame.data}`
         messages.value = [...messages.value]
@@ -252,6 +265,8 @@ async function sendStream(content: string): Promise<void> {
         <div class="sub">与单个 agent 的 1v1 会话 · 回复经事件总线实时推送</div>
       </div>
     </div>
+
+    <div v-if="flash" class="callout bad" style="margin-bottom: 12px">{{ flash }}</div>
 
     <div class="chat-layout">
       <!-- 侧栏：会话列表 / agent 选择 -->
@@ -310,7 +325,6 @@ async function sendStream(content: string): Promise<void> {
 
           <div class="chat-box">
             <div ref="historyEl" class="chat-history">
-              <div v-if="flash" class="callout bad" style="margin: 8px 12px">{{ flash }}</div>
               <div style="display: flex; flex-direction: column; gap: 10px; padding: 8px 0">
                 <template v-for="m in messages" :key="m.id">
                   <div v-if="m.sender_type === 'system'" class="bubble system">{{ m.content }}</div>
@@ -363,6 +377,12 @@ async function sendStream(content: string): Promise<void> {
 </template>
 
 <style scoped>
+/* McBubble content 默认不保留换行；agent 多行回复（含 [error]/[网络] 追加行）需 pre-wrap。 */
+.chat-history :deep(.mc-bubble-content) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
 .msg-meta {
   font-size: 11px;
   color: var(--ink-4);

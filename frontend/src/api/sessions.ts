@@ -1,4 +1,4 @@
-import { get, post } from './client'
+import { get, notifyUnauthorized, post } from './client'
 import type { Message, SendResult, Session, StreamFrame } from './types'
 
 export const createSession = (agentId: string): Promise<Session> =>
@@ -12,8 +12,9 @@ export const recentSessions = (limit = 20): Promise<Session[]> => get<Session[]>
 export const agentSessions = (agentId: string): Promise<Session[]> =>
   get<Session[]>(`/api/agents/${agentId}/sessions`)
 
-export const sessionMessages = (sessionId: string): Promise<Message[]> =>
-  get<Message[]>(`/api/sessions/${sessionId}/messages`)
+/** 会话历史消息（升序）；默认取最近 200 条，长会话避免全量载荷。 */
+export const sessionMessages = (sessionId: string, limit = 200): Promise<Message[]> =>
+  get<Message[]>(`/api/sessions/${sessionId}/messages?limit=${limit}`)
 
 export function sendSync(sessionId: string, content: string): Promise<SendResult> {
   return post<SendResult>(`/api/sessions/${sessionId}/messages`, { content, mode: 'sync' })
@@ -35,6 +36,7 @@ export async function streamSend(
     body: JSON.stringify({ content, mode: 'stream' }),
   })
   if (res.status === 401) {
+    notifyUnauthorized() // 与统一 client 同语义：会话失效跳登录
     throw Object.assign(new Error('登录已失效，请重新登录'), { name: 'ApiError', status: 401 })
   }
   if (!res.ok || !res.body) {
