@@ -369,6 +369,65 @@ def suite_group_after_restart(s: Serve, gid: str, turns_before: dict):
            f"before={turns_before} after={turns_after}")
 
 
+def suite_tasks(s: Serve):
+    section("K. 任务编排（M4）")
+    a1, a2 = ECHO_ID, STREAM_ID
+    # 顺序链 {{prev}} 渲染（echo 型 agent）
+    st, res = req(BASE_A, "POST", "/api/tasks", {"chain": {"nodes": [
+        {"agent_id": a1, "input": "K 组第一环"},
+        {"agent_id": a1, "input": "第二环 prev={{prev}}"},
+    ], "input": "K 链起点"}}, token=BUILTIN_TOKEN)
+    ok = st == 201 and res.get("id", "").startswith("task-")
+    record("K", "I90", "提交协作链 → 201 task id", ok, f"id={res.get('id', '-')[:20]}")
+    tid = res.get("id", "")
+
+    # 轮询到终态并断言 {{prev}} 渲染
+    final = None
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        st, t = req(BASE_A, "GET", f"/api/tasks/{tid}", token=BUILTIN_TOKEN)
+        if t.get("status") in ("done", "failed", "cancelled"):
+            final = t
+            break
+        time.sleep(0.3)
+    ok = final and final["status"] == "done" and "第二环 prev=K 组第一环" in (final.get("result") or "")
+    record("K", "I91", "链执行 done + {{prev}} 渲染正确", bool(ok),
+           f"status={final.get('status') if final else '-'} result={(final.get('result') or '')[:40] if final else '-'}")
+
+    # stream-only agent 同步 Send → 节点失败重试耗尽 → failed；resume 语义拒绝（echo 修好前）
+    st, res2 = req(BASE_A, "POST", "/api/tasks", {"chain": {"nodes": [
+        {"agent_id": a2, "input": "stream-only 同步必败", "retries": 1},
+    ], "input": ""}}, token=BUILTIN_TOKEN)
+    tid2 = res2.get("id", "")
+    deadline = time.time() + 15
+    t2 = {}
+    while time.time() < deadline:
+        st, t2 = req(BASE_A, "GET", f"/api/tasks/{tid2}", token=BUILTIN_TOKEN)
+        if t2.get("status") in ("done", "failed"):
+            break
+        time.sleep(0.3)
+    ok = t2.get("status") == "failed"
+    record("K", "I92", "不支持同步的节点 → 重试耗尽 failed（结果保留 nodes）", ok,
+           f"nodes={len(t2.get('nodes') or [])}")
+
+    # 运行中 cancel：长链 + hang 节点用 stream agent 快速链取消（竞态窗口小，用 failed→resume 拒绝语义替代：
+    # 断言 resume 对非 failed 任务被拒 409）
+    st, r3 = req(BASE_A, "POST", f"/api/tasks/{tid}/resume", token=BUILTIN_TOKEN)
+    ok = st == 409
+    record("K", "I93", "resume 非 failed 任务 → 409 拒绝", ok, f"http={st}")
+
+    # cron 登记 + 列表 + 删除（不等待整分钟触发）
+    st, cj = req(BASE_A, "POST", "/api/tasks", {"cron": {"name": "it-cron-k", "expr": "0 9 * * 1-5",
+                                                          "target": {"type": "agent", "agent_id": a1, "input": "日报"}}}, token=BUILTIN_TOKEN)
+    ok = st == 201 and cj.get("id", "").startswith("cron-")
+    record("K", "I94", "cron 任务登记（表达式校验通过）", ok, f"id={cj.get('id', '-')[:18]}")
+    st, bad = req(BASE_A, "POST", "/api/tasks", {"cron": {"name": "it-cron-bad", "expr": "99 * * * *",
+                                                           "target": {"type": "agent", "agent_id": a1}}}, token=BUILTIN_TOKEN)
+    record("K", "I95", "非法 cron 表达式 → 400", st == 400, str(bad.get("error", {}).get("message", ""))[:40])
+    st, _ = req(BASE_A, "DELETE", f"/api/cron/{cj.get('id')}", token=BUILTIN_TOKEN)
+    record("K", "I96", "cron 删除", st == 200, "")
+
+
 def suite_cli(s: Serve):
     section("H. CLI（FR5.4）")
     env = dict(os.environ, NEXUS_URL=BASE_A)
@@ -491,6 +550,7 @@ def main():
         suite_group_after_restart(a, gid, turns_before)
 
         suite_private(a, sess_id)
+        suite_tasks(a)
         suite_cli(a)
         suite_auth()
         if not args.skip_real:
