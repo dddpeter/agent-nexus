@@ -448,10 +448,10 @@ type sqliteGroupRepo struct{ db *sql.DB }
 
 func (r *sqliteGroupRepo) Put(ctx context.Context, g Group) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO groups (id, name, members_json, arbiter_config_json) VALUES (?,?,?,?)
+		`INSERT INTO groups (id, name, members_json, arbiter_config_json, state_json) VALUES (?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET name=excluded.name, members_json=excluded.members_json,
-		   arbiter_config_json=excluded.arbiter_config_json`,
-		g.ID, g.Name, g.MembersJSON, g.ArbiterConfigJSON)
+		   arbiter_config_json=excluded.arbiter_config_json, state_json=excluded.state_json`,
+		g.ID, g.Name, g.MembersJSON, g.ArbiterConfigJSON, g.StateJSON)
 	if err != nil {
 		return fmt.Errorf("repo: put group: %w", err)
 	}
@@ -461,8 +461,8 @@ func (r *sqliteGroupRepo) Put(ctx context.Context, g Group) error {
 func (r *sqliteGroupRepo) Get(ctx context.Context, id string) (Group, error) {
 	var g Group
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, name, members_json, arbiter_config_json FROM groups WHERE id = ?`, id).
-		Scan(&g.ID, &g.Name, &g.MembersJSON, &g.ArbiterConfigJSON)
+		`SELECT id, name, members_json, arbiter_config_json, state_json FROM groups WHERE id = ?`, id).
+		Scan(&g.ID, &g.Name, &g.MembersJSON, &g.ArbiterConfigJSON, &g.StateJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Group{}, fmt.Errorf("%w: group %s", ErrNotFound, id)
 	}
@@ -473,7 +473,7 @@ func (r *sqliteGroupRepo) Get(ctx context.Context, id string) (Group, error) {
 }
 
 func (r *sqliteGroupRepo) List(ctx context.Context) ([]Group, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, name, members_json, arbiter_config_json FROM groups ORDER BY id`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name, members_json, arbiter_config_json, state_json FROM groups ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("repo: list groups: %w", err)
 	}
@@ -481,12 +481,21 @@ func (r *sqliteGroupRepo) List(ctx context.Context) ([]Group, error) {
 	var out []Group
 	for rows.Next() {
 		var g Group
-		if err := rows.Scan(&g.ID, &g.Name, &g.MembersJSON, &g.ArbiterConfigJSON); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &g.MembersJSON, &g.ArbiterConfigJSON, &g.StateJSON); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
 	}
 	return out, rows.Err()
+}
+
+// SaveState 仅更新快照列；行不存在静默忽略（群刚被删除的竞态，快照丢失容忍）。
+func (r *sqliteGroupRepo) SaveState(ctx context.Context, id string, stateJSON string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE groups SET state_json = ? WHERE id = ?`, stateJSON, id)
+	if err != nil {
+		return fmt.Errorf("repo: save group state: %w", err)
+	}
+	return nil
 }
 
 // ---------- tasks ----------

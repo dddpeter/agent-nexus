@@ -82,6 +82,8 @@ type Group struct {
 	Name              string
 	MembersJSON       string
 	ArbiterConfigJSON string
+	// StateJSON 仲裁器运行态快照（arbiter.GroupState 序列化；30s 异步落库，U-F6-05）。
+	StateJSON string
 }
 
 // Task 是 tasks 表的存储映照（节点级状态一期内嵌 nodes_json）。
@@ -153,6 +155,8 @@ type GroupRepo interface {
 	Put(ctx context.Context, g Group) error
 	Get(ctx context.Context, id string) (Group, error)
 	List(ctx context.Context) ([]Group, error)
+	// SaveState 仅更新仲裁器状态快照列（30s 异步落库路径，不整行覆盖）。
+	SaveState(ctx context.Context, id string, stateJSON string) error
 }
 
 // TaskRepo tasks 聚合。

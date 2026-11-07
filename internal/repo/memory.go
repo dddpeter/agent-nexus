@@ -278,6 +278,17 @@ func (m *memGroupRepo) List(_ context.Context) ([]Group, error) {
 	return out, nil
 }
 
+// SaveState 仅更新快照列；行不存在静默忽略（与 sqlite 实现语义一致）。
+func (m *memGroupRepo) SaveState(_ context.Context, id string, stateJSON string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if g, ok := m.groups[id]; ok {
+		g.StateJSON = stateJSON
+		m.groups[id] = g
+	}
+	return nil
+}
+
 // ---------- tasks ----------
 
 type memTaskRepo memStore
