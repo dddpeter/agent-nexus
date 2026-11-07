@@ -37,6 +37,18 @@ func (s *Server) mountAPI(r chi.Router) {
 		r.Get("/agents/{id}/sessions", s.handleAgentSessions)
 	}
 
+	// 群聊（M3；协调器未启用时返回 501）
+	r.Post("/groups", s.handleCreateGroup)
+	r.Get("/groups", s.handleListGroups)
+	r.Route("/groups/{id}", func(r chi.Router) {
+		r.Get("/", s.handleGetGroup)
+		r.Get("/messages", s.handleGroupMessages)
+		r.Post("/messages", s.handleGroupSend)
+		r.Post("/unfreeze", s.handleGroupUnfreeze)
+		r.Post("/topic", s.handleGroupTopic)
+		r.Put("/config", s.handleGroupConfig)
+	})
+
 	// agents
 	r.Post("/agents", s.handleRegisterAgent)
 	r.Get("/agents", s.handleListAgents)

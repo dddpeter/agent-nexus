@@ -62,4 +62,10 @@ func TestDefaultsWhenFileMissing(t *testing.T) {
 	assert.Equal(t, 1800*time.Second, cfg.Registry.DefaultChildTimeout.D())
 	assert.Equal(t, 32, cfg.Registry.MaxChildren)
 	assert.Equal(t, 5*time.Second, cfg.Registry.KillGrace.D())
+	// 跨字段派生默认值同样要生效（曾因文件不存在早退跳过 applyDefaults，实机踩坑）
+	assert.Equal(t, "data/backups", cfg.Server.BackupDir, "备份目录默认派生自 data_dir")
+	assert.Equal(t, 7, cfg.Server.BackupKeep)
+	assert.Equal(t, 24*time.Hour, cfg.Server.BackupInterval.D())
+	assert.Equal(t, 24*time.Hour, cfg.Server.SessionIdleTimeout.D(), "闲置回收默认应生效")
+	assert.Equal(t, "data/pgids.json", cfg.Registry.PgidFile)
 }

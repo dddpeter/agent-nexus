@@ -23,6 +23,7 @@ import (
 	"github.com/dddpeter/agent-nexus/internal/registry"
 	"github.com/dddpeter/agent-nexus/internal/repo"
 	"github.com/dddpeter/agent-nexus/internal/session"
+	"github.com/dddpeter/agent-nexus/internal/session/group"
 	"github.com/dddpeter/agent-nexus/internal/session/private"
 )
 
@@ -38,7 +39,7 @@ func newRootCmd() *cobra.Command {
 		Use:   "nexus",
 		Short: "Nexus — 异构 Agent 纳管与编排平台",
 	}
-	root.AddCommand(newServeCmd(), newAgentCmd())
+	root.AddCommand(newServeCmd(), newAgentCmd(), newChatCmd(), newGroupSendCmd())
 	return root
 }
 
@@ -138,8 +139,17 @@ func runServe(ctx context.Context, cfg config.Config) error {
 	})
 	router.SetAsyncRunner(schedulerRunner{scheduler})
 
+	// 群聊协调器（M3）：仲裁接线 + 30s 状态快照；重启恢复（U-F6-05）
+	coord := group.New(store, reg, b, group.Options{
+		SyncTimeout: 300 * time.Second,
+		Logger:      logger,
+	})
+	if err := coord.LoadPersisted(ctx); err != nil {
+		logger.Error("群状态恢复失败", "err", err)
+	}
+
 	srv := api.New(api.Deps{
-		Cfg: cfg, Store: store, Bus: b, Registry: reg, Router: router, Log: logger,
+		Cfg: cfg, Store: store, Bus: b, Registry: reg, Router: router, Groups: coord, Log: logger,
 	})
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -150,6 +160,33 @@ func runServe(ctx context.Context, cfg config.Config) error {
 		<-sig
 		cancel()
 	}()
+	go coord.Run(ctx)
+
+	// 定时备份（F6.2，TODO#9 一半关闭）：VACUUM INTO 快照 data/backups/，保留 7 份
+	if sb, ok := store.(interface {
+		Backup(ctx context.Context, dir string, keep int) (string, error)
+	}); ok && cfg.Server.BackupInterval > 0 && cfg.Store.DSN != ":memory:" {
+		runBackups := func() {
+			if path, err := sb.Backup(context.Background(), cfg.Server.BackupDir, cfg.Server.BackupKeep); err != nil {
+				logger.Warn("备份失败", "err", err)
+			} else {
+				logger.Info("备份完成", "path", path)
+			}
+		}
+		runBackups() // 启动即出一份快照（恢复演练数据源）
+		backupTicker := time.NewTicker(cfg.Server.BackupInterval.D())
+		go func() {
+			defer backupTicker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-backupTicker.C:
+					runBackups()
+				}
+			}
+		}()
+	}
 
 	// 会话闲置回收（FR2.5，TODO#11 关闭）：默认闲置 24h 归档，session_idle_timeout<0 禁用
 	if cfg.Server.SessionIdleTimeout > 0 {

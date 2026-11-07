@@ -14,6 +14,7 @@ import (
 	"github.com/dddpeter/agent-nexus/internal/config"
 	"github.com/dddpeter/agent-nexus/internal/registry"
 	"github.com/dddpeter/agent-nexus/internal/repo"
+	"github.com/dddpeter/agent-nexus/internal/session/group"
 	"github.com/dddpeter/agent-nexus/internal/session/private"
 )
 
@@ -23,7 +24,8 @@ type Deps struct {
 	Store    repo.Store
 	Bus      bus.Bus
 	Registry *registry.Impl
-	Router   *private.Router // 私聊会话路由（任务 12 起）
+	Router   *private.Router    // 私聊会话路由（任务 12 起）
+	Groups   *group.Coordinator // 群聊协调器（M3 起；nil = 未启用）
 	Log      *slog.Logger
 }
 

@@ -22,6 +22,12 @@ type Config struct {
 		SessionIdleTimeout adapter.Duration `yaml:"session_idle_timeout"`
 		// SessionSweepInterval 闲置扫描周期（默认 30min）
 		SessionSweepInterval adapter.Duration `yaml:"session_sweep_interval"`
+		// BackupInterval VACUUM INTO 快照周期（默认 24h；<=0 禁用备份，F6.2）
+		BackupInterval adapter.Duration `yaml:"backup_interval"`
+		// BackupKeep 保留份数（默认 7）
+		BackupKeep int `yaml:"backup_keep"`
+		// BackupDir 备份目录（默认 data/backups）
+		BackupDir string `yaml:"backup_dir"`
 	} `yaml:"server"`
 
 	Store struct {
@@ -65,6 +71,8 @@ func Default() Config {
 	c.Server.DataDir = "data"
 	c.Server.SessionIdleTimeout = adapter.Duration(24 * time.Hour) // FR2.5
 	c.Server.SessionSweepInterval = adapter.Duration(30 * time.Minute)
+	c.Server.BackupInterval = adapter.Duration(24 * time.Hour) // F6.2
+	c.Server.BackupKeep = 7
 	c.Store.Driver = "sqlite"
 	c.Store.DSN = "data/nexus.db"
 	c.Orchestration.Engine = "builtin" // 一期默认内置降级调度器（Temporal 未接入时）
@@ -78,18 +86,19 @@ func Default() Config {
 
 // Load 读取 YAML 配置文件并叠加默认值；文件不存在时返回默认值（可选启动）。
 // 标量中的 ${ENV_VAR} 引用统一解析（含 auth_token）。
+// 注意：无论文件存在与否都必须走 applyDefaults——跨字段默认值（BackupDir/PgidFile 等
+// 依赖 DataDir 派生）只在这里补齐（曾因文件不存在早退导致这些值为空，实机踩坑）。
 func Load(path string) (Config, error) {
 	c := Default()
 	if path != "" {
 		raw, err := os.ReadFile(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return c, nil
-			}
+		if err != nil && !os.IsNotExist(err) {
 			return c, fmt.Errorf("config: read %s: %w", path, err)
 		}
-		if err := yaml.Unmarshal(raw, &c); err != nil {
-			return c, fmt.Errorf("config: parse %s: %w", path, err)
+		if err == nil {
+			if err := yaml.Unmarshal(raw, &c); err != nil {
+				return c, fmt.Errorf("config: parse %s: %w", path, err)
+			}
 		}
 	}
 	c.applyDefaults()
@@ -111,6 +120,12 @@ func (c *Config) applyDefaults() {
 	// SessionIdleTimeout：0=未配置走默认 24h；显式负值=禁用回收（保留负值不覆盖）
 	if c.Server.SessionIdleTimeout == 0 {
 		c.Server.SessionIdleTimeout = d.Server.SessionIdleTimeout
+	}
+	if c.Server.BackupKeep <= 0 {
+		c.Server.BackupKeep = d.Server.BackupKeep
+	}
+	if c.Server.BackupDir == "" {
+		c.Server.BackupDir = c.Server.DataDir + "/backups"
 	}
 	if c.Store.Driver == "" {
 		c.Store.Driver = d.Store.Driver
