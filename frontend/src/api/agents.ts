@@ -126,3 +126,22 @@ export function secretSet(fields: SchemaField[], current?: Record<string, unknow
   const v = current?.[name]
   return typeof v === 'string' ? v.trim() !== '' : v !== undefined && v !== null
 }
+
+// ---------- hermes 网关自动探测（降低注册难度） ----------
+
+export interface HermesCandidate {
+  port: number
+  base_url: string
+  platform?: string
+  version?: string
+  auth_required: boolean
+}
+
+export interface HermesDiscoverResult {
+  scanned: number
+  candidates: HermesCandidate[]
+}
+
+/** 扫描本机 8640-8649 端口段，返回实际运行的 hermes 网关候选。 */
+export const discoverHermes = (host = '127.0.0.1'): Promise<HermesDiscoverResult> =>
+  get<HermesDiscoverResult>(`/api/adapters/hermes/discover?host=${host}`)

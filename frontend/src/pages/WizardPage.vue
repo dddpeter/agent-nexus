@@ -4,7 +4,7 @@
 // 名字自动生成 + 能力折叠为高级项 + 探活失败给排查建议。
 import { computed, onMounted, ref } from 'vue'
 import DynamicConfigForm from '../components/DynamicConfigForm.vue'
-import { buildConfigPayload, initialFormValues, listAdapters, registerAgent, testSpec } from '../api/agents'
+import { buildConfigPayload, discoverHermes, initialFormValues, listAdapters, registerAgent, testSpec } from '../api/agents'
 import type { AdapterInfo, Agent, Capabilities, TestResult } from '../api/types'
 import { ApiError } from '../api/client'
 
@@ -21,6 +21,34 @@ const showAdvanced = ref(false)
 const capMaxConcurrency = ref('')
 const capInterruptLevel = ref('')
 const capTypicalLatencyS = ref('')
+
+// hermes 自动探测（端口段 8640-8649）
+const probingHermes = ref(false)
+const hermesCandidates = ref<Array<{ port: number; base_url: string; platform?: string; version?: string; auth_required: boolean }>>([])
+const hermesNote = ref('')
+
+async function probeHermes(): Promise<void> {
+  probingHermes.value = true
+  hermesNote.value = ''
+  try {
+    const res = await discoverHermes()
+    hermesCandidates.value = res.candidates
+    if (res.candidates.length === 1) {
+      const c = res.candidates[0]
+      formValues.value['base_url'] = c.base_url
+      hermesNote.value = `已检测到本机网关 :${c.port}（${c.platform}${c.version ? ' ' + c.version : ''}）${c.auth_required ? ' · 需要密钥（填 ${API_SERVER_KEY} 引用环境变量）' : ' · 免鉴权'}`
+    } else if (res.candidates.length > 1) {
+      formValues.value['base_url'] = res.candidates[0].base_url
+      hermesNote.value = `检测到 ${res.candidates.length} 个网关（端口 ${res.candidates.map((c) => c.port).join('、')}），已选第一个，可在下方地址栏切换`
+    } else {
+      hermesNote.value = '本机 8640-8649 未检测到网关——请手动填地址，或启动网关后重进本步自动重探'
+    }
+  } catch {
+    hermesNote.value = '探测失败（网络异常），请手动填地址'
+  } finally {
+    probingHermes.value = false
+  }
+}
 
 const sendMessage = ref(false)
 const testing = ref(false)
@@ -55,6 +83,7 @@ function pickAdapter(name: string): void {
   formValues.value = initialFormValues(schema.value)
   testResult.value = null
   submitOk.value = null
+  if (name === 'hermes') void probeHermes()
 }
 
 function go(n: number): void {
@@ -196,6 +225,21 @@ async function submit(): Promise<void> {
         <div class="callout ok" style="margin: 0 0 14px">
           ✓ 配置已预填实测默认值——通常只需确认地址/路径与真实环境一致
         </div>
+        <template v-if="adapterName === 'hermes'">
+          <div v-if="probingHermes" class="callout" style="margin: 0 0 14px">
+            正在探测本机 8640-8649 端口的 hermes 网关…<span class="spin" style="display:inline-block;margin-left:8px"></span>
+          </div>
+          <div v-else-if="hermesNote" class="callout" :class="hermesCandidates.length ? 'ok' : ''" style="margin: 0 0 14px">
+            {{ hermesNote }}
+            <button
+              v-if="hermesCandidates.length"
+              class="btn btn-quiet btn-sm"
+              type="button"
+              style="margin-left: 10px"
+              @click="probeHermes"
+            >重新探测</button>
+          </div>
+        </template>
         <label class="f-label">Adapter 配置</label>
         <DynamicConfigForm v-model="formValues" :fields="schema" />
 

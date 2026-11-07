@@ -18,6 +18,7 @@ func (s *Server) mountAPI(r chi.Router) {
 
 	// adapters（注册向导数据源）
 	r.Get("/adapters", s.handleListAdapters)
+	r.Get("/adapters/hermes/discover", s.handleHermesDiscover) // 本机网关自动探测（降低注册难度）
 
 	// SSE 全局流（断线 Last-Event-ID 补偿重放）
 	r.Get("/stream", s.handleGlobalStream)
