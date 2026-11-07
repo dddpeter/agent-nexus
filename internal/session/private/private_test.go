@@ -428,6 +428,7 @@ func TestStreamFinalPersistAfterCancel(t *testing.T) {
 	require.NoError(t, err)
 
 	sctx, cancel := context.WithCancel(ctx)
+	defer cancel() // 短路路径（未收到 final 即失败）也释放；主路径在 final 后显式 cancel 复现竞态
 	ch, closeFn, err := r.StreamMessage(sctx, sess.ID, "取消竞态回归")
 	require.NoError(t, err)
 	defer closeFn()
