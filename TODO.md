@@ -27,7 +27,7 @@
 5. **F2.3 摘要生成**：`Summarizer` 注入点已留，默认实现为「[summary] 标记 + 截断」（设计允许的降级路径）；「用任意可用 agent 生成摘要」待 M2 后期接入。
 6. **messages 落库时序**：设计为「异步写入」；当前为同步写（本地 SQLite WAL 单条插入 <1ms，不阻塞回复路径），U-F2-01 语义不受影响。如需严格异步可改为 bus 消费者。
 7. **限流实现**：简单窗口计数（60 req/min）而非令牌桶；U-F5-02 的 61 次 → 429 语义精确满足。
-8. **orchestr**：按铁律仅实现 `Scheduler` 接口 + builtin 降级（goroutine + tasks 表，重启 running → failed，已文档化）。Temporal 实现未做（禁止项）。
+8. **orchestr**：builtin 降级完整落地（M4，2026-11-07）：Scheduler 接口 + 协作链 DAG 执行引擎 + cron 调度循环（重启 running → failed 降级语义保持）；Temporal 实现未做（禁止项，接口同签名二期接入）。
 
 ## 未完成项（按任务范围裁剪，非本夜 DoD）
 
