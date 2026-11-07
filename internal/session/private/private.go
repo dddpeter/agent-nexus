@@ -81,9 +81,15 @@ func (o *Options) normalize() {
 	}
 }
 
+// SummaryMark 摘要标记（agent 摘要与截断降级共用）。
+const SummaryMark = "[summary]"
+
+// TruncateSummarizer 导出的截断降级实现（serve 装配层 agent 摘要失败时复用，F2.3）。
+func TruncateSummarizer(rounds []string) string { return truncateSummarizer(rounds) }
+
 // truncateSummarizer 默认摘要：截断降级（标记 + 最近内容），失败不阻塞（F2.3：失败则截断）。
 func truncateSummarizer(rounds []string) string {
-	const summaryMark = "[summary]"
+	const summaryMark = SummaryMark
 	var sb strings.Builder
 	sb.WriteString(summaryMark + " 前文摘要（截断模式）: ")
 	total := 0

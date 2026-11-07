@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import { setUnauthorizedHandler } from './api/client'
+import './styles/fonts.css'
 import './styles/system.css'
 
 const app = createApp(App)

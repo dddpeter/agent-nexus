@@ -135,6 +135,7 @@ func runServe(ctx context.Context, cfg config.Config) error {
 	router := private.New(store, reg, b, private.Options{
 		SyncTimeout:       300 * time.Second,
 		StreamIdleTimeout: 60 * time.Second,
+		Summarizer:        agentSummarizer(store, reg, logger), // TODO#5 闭环：agent 生成摘要（失败降级截断）
 		Logger:            logger,
 	})
 	router.SetAsyncRunner(schedulerRunner{scheduler})

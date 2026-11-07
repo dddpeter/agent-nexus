@@ -42,6 +42,7 @@ func (s *Server) mountAPI(r chi.Router) {
 	r.Get("/groups", s.handleListGroups)
 	r.Route("/groups/{id}", func(r chi.Router) {
 		r.Get("/", s.handleGetGroup)
+		r.Get("/stream", s.handleGroupStream) // FR5.2 群独立 SSE
 		r.Get("/messages", s.handleGroupMessages)
 		r.Post("/messages", s.handleGroupSend)
 		r.Post("/unfreeze", s.handleGroupUnfreeze)

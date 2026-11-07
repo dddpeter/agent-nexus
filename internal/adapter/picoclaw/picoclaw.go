@@ -34,6 +34,8 @@ func (f *Factory) ConfigSchema() adapter.Schema {
 		{Name: "output", Label: "输出解析", Type: adapter.FieldString, Default: "json",
 			Options: []string{"json", "text", "lastline"},
 			Help:    "json=解析最后一行 {\"reply\",\"session\"}；text=全文即回复；lastline=取最后一行非空文本（真实 CLI 的 banner/日志噪音下取回复行）"},
+		{Name: "output_prefix", Label: "回复行前缀", Type: adapter.FieldString,
+			Help: "lastline 模式可选：回复行前缀（如 picoclaw 的 '鲎'）；命中后取该前缀至输出末尾（多行回复/代码块完整提取），未命中回退末行"},
 		{Name: "timeout", Label: "调用超时", Type: adapter.FieldDuration, Default: "5m0s"},
 		{Name: "cwd", Label: "工作目录", Type: adapter.FieldString},
 		{Name: "env", Label: "附加环境变量", Type: adapter.FieldList, Help: "KEY=VAL 列表"},
@@ -50,28 +52,30 @@ func (f *Factory) New(cfg adapter.Config) (adapter.AgentAdapter, error) {
 		return nil, adapter.NewFieldError("command", "required")
 	}
 	return &Adapter{
-		agentID:  id.New(),
-		cmdTmpl:  cmdList,
-		probe:    adapter.GetList(normalized, "probe_command"),
-		output:   adapter.GetStr(normalized, "output", "json"),
-		timeout:  adapter.GetDuration(normalized, "timeout", 5*time.Minute),
-		cwd:      adapter.GetStr(normalized, "cwd", ""),
-		env:      adapter.GetList(normalized, "env"),
-		sessions: make(map[adapter.SessionID]string),
+		agentID:      id.New(),
+		cmdTmpl:      cmdList,
+		probe:        adapter.GetList(normalized, "probe_command"),
+		output:       adapter.GetStr(normalized, "output", "json"),
+		outputPrefix: strings.TrimSpace(adapter.GetStr(normalized, "output_prefix", "")),
+		timeout:      adapter.GetDuration(normalized, "timeout", 5*time.Minute),
+		cwd:          adapter.GetStr(normalized, "cwd", ""),
+		env:          adapter.GetList(normalized, "env"),
+		sessions:     make(map[adapter.SessionID]string),
 	}, nil
 }
 
 // Adapter CLI 型实现。
 type Adapter struct {
-	agentID  string
-	cmdTmpl  []string
-	probe    []string
-	output   string
-	timeout  time.Duration
-	cwd      string
-	env      []string
-	mu       sync.Mutex
-	sessions map[adapter.SessionID]string // 平台 sid -> agent 侧 session（external_ref）
+	agentID      string
+	cmdTmpl      []string
+	probe        []string
+	output       string
+	outputPrefix string
+	timeout      time.Duration
+	cwd          string
+	env          []string
+	mu           sync.Mutex
+	sessions     map[adapter.SessionID]string // 平台 sid -> agent 侧 session（external_ref）
 }
 
 var _ adapter.AgentAdapter = (*Adapter)(nil)
@@ -199,8 +203,26 @@ func (a *Adapter) parseOutput(stdout, ext string) (adapter.Reply, error) {
 	if a.output == "lastline" {
 		// 真实 CLI 常在 stdout 打 banner/进度日志（如 picoclaw 鲎 banner + zerolog WRN），
 		// 回复约定为最后一行非空文本；无输出视为失败。
+		lines := strings.Split(out, "\n")
+		// 前缀模式：多行回复（代码块等）从命中前缀的行起完整提取（C-F4-01 实测：
+		// 代码类回复以 ``` 围栏结尾，朴素末行会取到空围栏标记）
+		if a.outputPrefix != "" {
+			for i := len(lines) - 1; i >= 0; i-- {
+				if strings.HasPrefix(strings.TrimSpace(lines[i]), a.outputPrefix) {
+					content := strings.TrimPrefix(strings.TrimSpace(lines[i]), a.outputPrefix)
+					if i+1 < len(lines) {
+						content += "\n" + strings.Join(lines[i+1:], "\n")
+					}
+					content = strings.TrimSpace(content)
+					if content == "" {
+						break // 前缀行之后无内容 → 回退末行逻辑
+					}
+					return adapter.Reply{Content: content, SessionRef: ext, Done: true}, nil
+				}
+			}
+		}
 		last := ""
-		for _, line := range strings.Split(out, "\n") {
+		for _, line := range lines {
 			if t := strings.TrimSpace(line); t != "" {
 				last = t
 			}

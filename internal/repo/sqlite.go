@@ -31,12 +31,13 @@ type sqliteStore struct {
 }
 
 // OpenSQLite 打开（必要时创建）SQLite 数据库并执行 goose 迁移。
-// dsn 形如 "data/nexus.db"；父目录自动创建；WAL/busy_timeout/foreign_keys 经 DSN pragma 启用。
+// dsn 形如 "data/nexus.db"；父目录自动创建（0700——库内为明文消息存档，安全基线 3.3）；
+// WAL/busy_timeout/foreign_keys 经 DSN pragma 启用。
 func OpenSQLite(ctx context.Context, dsn string) (Store, error) {
 	path := strings.TrimPrefix(dsn, "file:")
 	if path != dsn || !strings.Contains(path, ":") { // 纯文件路径或 file: 路径
 		if dir := filepath.Dir(path); dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
+			if err := os.MkdirAll(dir, 0o700); err != nil {
 				return nil, fmt.Errorf("repo: create data dir: %w", err)
 			}
 		}
@@ -50,6 +51,10 @@ func OpenSQLite(ctx context.Context, dsn string) (Store, error) {
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("repo: ping sqlite (%s): %w", path, err)
+	}
+	// 库文件收敛属主可读写（新建默认 0644 含明文存档；只读 FS 等失败降级继续）
+	if info, ierr := os.Stat(path); ierr == nil && info.Mode().Perm()&0o077 != 0 {
+		_ = os.Chmod(path, info.Mode().Perm()&^0o077)
 	}
 
 	s := &sqliteStore{db: db}
