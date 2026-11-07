@@ -42,8 +42,8 @@ func (m *mockSummaryAgent) Send(ctx context.Context, sid adapter.SessionID, msg 
 
 type mockSummaryFactory struct{ ad *mockSummaryAgent }
 
-func (f *mockSummaryFactory) Name() string                         { return "mocksum" }
-func (f *mockSummaryFactory) ConfigSchema() adapter.Schema         { return adapter.Schema{} }
+func (f *mockSummaryFactory) Name() string                 { return "mocksum" }
+func (f *mockSummaryFactory) ConfigSchema() adapter.Schema { return adapter.Schema{} }
 func (f *mockSummaryFactory) New(cfg adapter.Config) (adapter.AgentAdapter, error) {
 	return f.ad, nil
 }

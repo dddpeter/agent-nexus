@@ -120,7 +120,18 @@ M4（F4 协作链 DAG / cron / 重试取消恢复 / 任务 API+页面+CLI）交�
 
 **遗留更新**：U-F4-05 的 CLI 子进程 kill 联动（F7）由 execx 治理覆盖（hang 单测 ctx 感知）；cron 表达式不含秒级/时区配置（一期分钟粒度足够）。
 
-## 五、结论与遗留
+## 五、收官轮：规划内遗留项全部闭环（同日）
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| TODO#5 私聊摘要 agent 化 | ✅ | agentSummarizer：内容寻址缓存（同轮次不重复 LLM）、失败/超时降级截断（F2.3 路径）；回归 `TestAgentSummarizer` 五分支 |
+| 安全 3.3 数据目录 0600 | ✅ | 实测新库 `data`=700、`nexus.db`=600（OpenSQLite 创建/收敛） |
+| FR5.2 群独立 SSE | ✅ | `GET /api/groups/{id}/stream` 群消息+仲裁决策过滤转发、Last-Event-ID 同水位重放，实测收到 id:69/70 |
+| **C-F4-01 真实三 agent 协作链 e2e** | ✅ | **picoclaw 写代码（230s 全链 done）→ hermes 评审（终端实测 15 用例，发现真 bug：'İ' U+0130 lower() 展开误判）→ picoclaw 据评审修订（NFKD 归一化 + isinstance 守卫）**；全程结果落库，{{prev}} 语义正确 |
+| 附属修复 | ✅ | picoclaw `output_prefix`：lastline 多行回复/代码块完整提取（首跑 e2e 抓到空围栏缺陷） |
+| 前端 v4 HUD 强化 | ✅ | ruofei-frontend-design 技能指导：JetBrains Mono 本地打包全等宽指挥台、琥珀次级信号、卡片四角 bracket、扫描线/噪点/辉光三层氛围、stagger reveal |
+
+## 六、结论与遗留
 
 - 11-06 报告之后的两轮改造（真实 agent 接入重写、M3 群聊、持久化/备份）经 46 项黑盒集成 + 浏览器走查验证**全绿**；过程中发现的 2 个真实缺陷均已修复并带回归测试。
-- 遗留（更新）：FR3.5 静默冻结的运行时触发路径（随 agent 自发通道接入）；Temporal 引擎接入（二期，接口已同签名）；C-F4-01 真实三 agent 协作链 e2e 全自动跑（真实 LLM 成本考量，链路单环节已分别验证）。
+- 遗留（终版）：FR3.5 静默冻结运行时触发路径（结构性收敛于 v1"agent 不自发"设计，随自发通道接入）；Temporal 引擎（二期，接口同签名）。**M0-M4 全部里程碑、TODO 清单功能项、验收用例（含真实 e2e）至此全部闭环。**
