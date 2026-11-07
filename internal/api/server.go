@@ -54,13 +54,14 @@ func (s *Server) mount() {
 	r.Use(middlewareRecover(s.deps.Log))
 	r.Use(middlewareRequestID)
 	r.Use(middlewareAuth(s.deps.Cfg.Server.AuthToken, s.sessions, s.deps.Log))
-	r.Use(middlewareRateLimit(s.limiter))
 	r.Use(middlewareLogger(s.deps.Log))
 
 	// 健康检查（无需鉴权在 auth 中放行）
 	r.Get("/healthz", s.handleHealthz)
 
 	r.Route("/api", func(r chi.Router) {
+		// 限流只保护数据面：SPA shell / assets 一旦被限流，窗口内整站白屏（集成测试实测踩坑）
+		r.Use(middlewareRateLimit(s.limiter))
 		s.mountAPI(r)
 	})
 
