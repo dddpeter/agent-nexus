@@ -22,6 +22,7 @@ import (
 	"github.com/dddpeter/agent-nexus/internal/orchestr"
 	"github.com/dddpeter/agent-nexus/internal/registry"
 	"github.com/dddpeter/agent-nexus/internal/repo"
+	"github.com/dddpeter/agent-nexus/internal/session"
 	"github.com/dddpeter/agent-nexus/internal/session/private"
 )
 
@@ -149,6 +150,14 @@ func runServe(ctx context.Context, cfg config.Config) error {
 		<-sig
 		cancel()
 	}()
+
+	// 会话闲置回收（FR2.5，TODO#11 关闭）：默认闲置 24h 归档，session_idle_timeout<0 禁用
+	if cfg.Server.SessionIdleTimeout > 0 {
+		jan := session.NewJanitor(store, b, cfg.Server.SessionIdleTimeout.D(), cfg.Server.SessionSweepInterval.D(), logger)
+		go jan.Run(ctx)
+		logger.Info("会话闲置回收已启动",
+			"idle_timeout", cfg.Server.SessionIdleTimeout.D(), "sweep_interval", cfg.Server.SessionSweepInterval.D())
+	}
 	return srv.Run(ctx)
 }
 

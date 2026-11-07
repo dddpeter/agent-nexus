@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -17,6 +18,10 @@ type Config struct {
 		Listen    string `yaml:"listen"`
 		AuthToken string `yaml:"auth_token"`
 		DataDir   string `yaml:"data_dir"`
+		// SessionIdleTimeout 会话闲置回收阈值（FR2.5，默认 24h；设为负数禁用回收）
+		SessionIdleTimeout adapter.Duration `yaml:"session_idle_timeout"`
+		// SessionSweepInterval 闲置扫描周期（默认 30min）
+		SessionSweepInterval adapter.Duration `yaml:"session_sweep_interval"`
 	} `yaml:"server"`
 
 	Store struct {
@@ -58,6 +63,8 @@ func Default() Config {
 	var c Config
 	c.Server.Listen = ":8080"
 	c.Server.DataDir = "data"
+	c.Server.SessionIdleTimeout = adapter.Duration(24 * time.Hour) // FR2.5
+	c.Server.SessionSweepInterval = adapter.Duration(30 * time.Minute)
 	c.Store.Driver = "sqlite"
 	c.Store.DSN = "data/nexus.db"
 	c.Orchestration.Engine = "builtin" // 一期默认内置降级调度器（Temporal 未接入时）
@@ -97,6 +104,13 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Server.DataDir == "" {
 		c.Server.DataDir = d.Server.DataDir
+	}
+	if c.Server.SessionSweepInterval <= 0 {
+		c.Server.SessionSweepInterval = d.Server.SessionSweepInterval
+	}
+	// SessionIdleTimeout：0=未配置走默认 24h；显式负值=禁用回收（保留负值不覆盖）
+	if c.Server.SessionIdleTimeout == 0 {
+		c.Server.SessionIdleTimeout = d.Server.SessionIdleTimeout
 	}
 	if c.Store.Driver == "" {
 		c.Store.Driver = d.Store.Driver
